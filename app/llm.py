@@ -18,8 +18,10 @@ needs a transport handler, which the OpenAI-compatible ones already share.
 from __future__ import annotations
 
 import html
+import json
 import re
 import textwrap
+import time
 
 import httpx
 
@@ -215,28 +217,164 @@ def _generate_with_spec(spec: ModelSpec, prompt: str, base_html: str | None = No
 
 
 def generate_app_html(
-    prompt: str, base_html: str | None = None, model_id: str | None = None
+    prompt: str,
+    base_html: str | None = None,
+    model_id: str | None = None,
+    spec: ModelSpec | None = None,
 ) -> tuple[str, str]:
     """Turn a request into HTML. Returns (html, model_label_actually_used).
 
-    `model_id` selects a registry entry (from the frontend dropdown). If it's
-    missing or unknown, we fall back to the configured default model.
+    `spec`, when given, is used directly (BYOK: a transient spec carrying the
+    user's inline key). Otherwise `model_id` selects a registry entry (from the
+    frontend dropdown); if it's missing or unknown, we fall back to the
+    configured default model.
 
     If base_html is given, the model edits that app in place (iterate loop);
     otherwise it builds a new app from scratch.
 
-    If the selected model is configured but fails (bad key, quota, network), and
+    If a *server-configured* model fails (bad key, quota, network) and
     LLM_FALLBACK_TO_MOCK is on, we degrade to the mock generator instead of
     failing the request — so live demos never hard-error on the core action.
+    BYOK is exempt: a user testing their own key needs to see the real error.
     """
-    spec = get_model(model_id) or get_model(settings.default_model_id())
-    # Guard against a model whose key isn't actually set (e.g. stale client pick).
-    if spec is None or not spec.available:
-        spec = get_model("mock")
+    byok = spec is not None
+    if spec is None:
+        spec = get_model(model_id) or get_model(settings.default_model_id())
+        # Guard against a model whose key isn't actually set (e.g. stale client pick).
+        if spec is None or not spec.available:
+            spec = get_model("mock")
 
     try:
         return _generate_with_spec(spec, prompt, base_html), spec.label
     except Exception:
-        if spec.transport != "mock" and settings.LLM_FALLBACK_TO_MOCK:
+        # Surface BYOK errors verbatim (the user is debugging their own key);
+        # only auto-degrade for server-managed models.
+        if not byok and spec.transport != "mock" and settings.LLM_FALLBACK_TO_MOCK:
             return _mock_html(prompt, base_html), f"{spec.label} → Mock (fallback)"
         raise
+
+
+# --- streaming -----------------------------------------------------------
+# The blocking path above returns the whole HTML at once, which hides the
+# model's "thinking" and the code being written — the user just waits. The
+# streaming twins below yield incremental events so the UI can show reasoning
+# and code as they arrive. Events are simple tuples: (kind, payload) where kind
+# is one of: "model" | "reasoning" | "content" | "done" | "error".
+
+
+def _openai_stream(spec: ModelSpec, prompt: str, base_html: str | None = None):
+    """Yield ('reasoning', delta) / ('content', delta) from an SSE chat stream.
+
+    Reasoning models expose their chain-of-thought in delta.reasoning
+    (OpenRouter) or delta.reasoning_content (DeepSeek R1); regular content
+    arrives in delta.content. We surface both."""
+    headers = {"Authorization": f"Bearer {spec.api_key}"}
+    if "openrouter.ai" in spec.base_url:
+        headers["HTTP-Referer"] = "https://atoms-demo-lted.onrender.com"
+        headers["X-Title"] = settings.APP_NAME
+    if base_html:
+        messages = [
+            {"role": "system", "content": EDIT_SYSTEM_PROMPT},
+            {"role": "user", "content": _edit_user_content(base_html, prompt)},
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+    with httpx.stream(
+        "POST",
+        f"{spec.base_url}/chat/completions",
+        headers=headers,
+        json={
+            "model": spec.model,
+            "messages": messages,
+            "temperature": 0.7,
+            "stream": True,
+        },
+        timeout=httpx.Timeout(120.0, read=None),
+    ) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line or line.startswith(":"):
+                continue  # blank / comment (heartbeat) lines
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            choices = obj.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+            if reasoning:
+                yield ("reasoning", reasoning)
+            content = delta.get("content")
+            if content:
+                yield ("content", content)
+
+
+def _simulate_stream(full_html: str, chunk: int = 60, delay: float = 0.02):
+    """Chunk an already-produced HTML string into ('content', piece) events, so
+    keyless mock / non-streaming transports still animate in the UI."""
+    for i in range(0, len(full_html), chunk):
+        yield ("content", full_html[i : i + chunk])
+        time.sleep(delay)
+
+
+def stream_app_html(
+    prompt: str,
+    base_html: str | None = None,
+    model_id: str | None = None,
+    spec: ModelSpec | None = None,
+):
+    """Streaming twin of generate_app_html. Yields (kind, payload) events:
+      ("model", label)      once, first — the model actually used
+      ("reasoning", delta)  0+ times — chain-of-thought tokens
+      ("content", delta)    0+ times — raw HTML chunks (NOT fence-stripped)
+      ("done", html)        once, last — the cleaned, complete HTML
+      ("error", message)    on hard failure (fallback disabled / BYOK)
+
+    Mirrors generate_app_html's spec resolution and graceful mock fallback
+    (BYOK errors surface verbatim), but streams instead of returning a blob."""
+    byok = spec is not None
+    if spec is None:
+        spec = get_model(model_id) or get_model(settings.default_model_id())
+        if spec is None or not spec.available:
+            spec = get_model("mock")
+
+    def _source(s: ModelSpec):
+        """Pick a per-transport event stream for spec `s`."""
+        if s.transport == "openai":
+            return _openai_stream(s, prompt, base_html)
+        if s.transport == "anthropic":
+            return _simulate_stream(_anthropic_html(s, prompt, base_html))
+        return _simulate_stream(_mock_html(prompt, base_html))
+
+    acc: list[str] = []
+    yield ("model", spec.label)
+    try:
+        for kind, payload in _source(spec):
+            if kind == "content":
+                acc.append(payload)
+            yield (kind, payload)
+    except Exception as exc:  # noqa: BLE001
+        # BYOK: surface the real error so the user can fix their own key.
+        # Server-managed models degrade to mock when enabled.
+        if not byok and spec.transport != "mock" and settings.LLM_FALLBACK_TO_MOCK:
+            acc = []  # drop the partial failed stream
+            yield ("model", f"{spec.label} → Mock (fallback)")
+            for kind, payload in _simulate_stream(_mock_html(prompt, base_html)):
+                if kind == "content":
+                    acc.append(payload)
+                yield (kind, payload)
+        else:
+            yield ("error", str(exc))
+            return
+
+    yield ("done", _strip_code_fences("".join(acc)))

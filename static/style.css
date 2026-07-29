@@ -87,6 +87,105 @@ html, body {
 /* Options render in the OS menu, which is light — keep text readable there. */
 .model-picker select option { color: #0f172a; }
 
+/* Gear button that opens the BYOK (bring-your-own-key) dialog */
+.byok-gear {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.byok-gear:hover { border-color: var(--accent); color: var(--accent); }
+
+/* --- Modal dialog (BYOK) ------------------------------------------------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.25);
+  padding: 20px;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.modal-head h2 { font-size: 1.05rem; margin: 0; }
+.modal-close {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.modal-close:hover { color: var(--text); background: var(--panel-2); }
+.modal-intro { color: var(--muted); font-size: 0.82rem; line-height: 1.5; margin: 0 0 14px; }
+
+.byok-form { display: flex; flex-direction: column; gap: 12px; }
+.byok-field { display: flex; flex-direction: column; gap: 5px; }
+.byok-field > span { font-size: 0.8rem; color: var(--muted); }
+.byok-field input,
+.byok-field select {
+  background: #ffffff;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.86rem;
+}
+.byok-field input:focus,
+.byok-field select:focus { outline: none; border-color: var(--accent); }
+.byok-docs { font-size: 0.8rem; color: var(--accent); text-decoration: none; }
+.byok-docs:hover { text-decoration: underline; }
+.byok-security {
+  font-size: 0.76rem;
+  color: var(--muted);
+  background: var(--tint);
+  border: 1px solid var(--tint-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 0;
+  line-height: 1.5;
+}
+.byok-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.byok-actions .spacer { flex: 1; }
+.byok-actions .ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+.byok-actions .ghost:hover { border-color: var(--accent); color: var(--accent); }
+
 .topbar-right { display: flex; align-items: center; gap: 12px; }
 
 .lang-toggle {
@@ -295,6 +394,73 @@ body.resizing-v iframe { pointer-events: none; }
 .msg.assistant { background: var(--tint); border: 1px solid var(--tint-border); }
 .msg.user { background: var(--accent); color: var(--accent-ink); align-self: flex-end; max-width: 90%; }
 .hint { color: var(--muted); font-size: 0.82rem; }
+
+/* --- streaming message (live reasoning + code) ------------------------- */
+.msg .stream-status {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+/* subtle pulsing while tokens are still arriving */
+.msg.streaming .stream-status::after {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+  animation: atoms-pulse 1s ease-in-out infinite;
+}
+@keyframes atoms-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+/* collapsible chain-of-thought */
+.msg .reasoning {
+  margin-top: 8px;
+  border: 1px dashed var(--tint-border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.02);
+}
+.msg .reasoning > summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  user-select: none;
+}
+.msg .reasoning > summary:hover { color: var(--text); }
+.msg .reasoning .reasoning-body {
+  padding: 4px 10px 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+
+/* live code being written */
+.msg .code-progress { margin-top: 8px; }
+.msg .code-progress .code-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.msg .code-progress pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #0f1729;
+  color: #cdd6f4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+}
+
 
 .composer {
   --composer-h: 132px;

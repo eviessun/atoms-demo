@@ -16,12 +16,26 @@ const refreshBtn = document.getElementById("refresh-projects");
 const langToggle = document.getElementById("lang-toggle");
 const modeLabel = document.getElementById("mode-label");
 const newAppBtn = document.getElementById("new-app");
+// BYOK dialog elements
+const byokGear = document.getElementById("byok-gear");
+const byokOverlay = document.getElementById("byok-overlay");
+const byokForm = document.getElementById("byok-form");
+const byokProvider = document.getElementById("byok-provider");
+const byokTransport = document.getElementById("byok-transport");
+const byokBaseUrl = document.getElementById("byok-base-url");
+const byokModel = document.getElementById("byok-model");
+const byokKey = document.getElementById("byok-key");
+const byokDocs = document.getElementById("byok-docs");
+const byokCancel = document.getElementById("byok-cancel");
+const byokX = document.getElementById("byok-x");
+const byokClear = document.getElementById("byok-clear");
 
 let currentUser = null;
 let lastProjects = [];       // cache so we can re-render on language change
 let statusKey = "status.idle";
-let availableModels = [];    // [{id,label,free,transport}] from /api/models
+let availableModels = [];    // [{id,label,free,transport,byok}] from /api/models
 const MODEL_STORE_KEY = "atoms:selectedModel";
+const BYOK_STORE_KEY = "atoms:byok";   // {key,model,base_url,transport,provider}
 
 // Current app being worked on. When set, the composer iterates on it (edit mode)
 // instead of creating a new app. project_id is set for logged-in saved apps;
@@ -232,44 +246,182 @@ async function loadModels() {
 
 modelSelect.addEventListener("change", () => {
   localStorage.setItem(MODEL_STORE_KEY, modelSelect.value);
+  maybePromptByok();
 });
 
+// --- BYOK (bring your own key) ------------------------------------------
+// The user's key/model/base_url live ONLY in localStorage on this device and
+// are sent with each generate request for one-time use. The server never
+// stores them. Presets (base URL + default model + docs link) come from
+// /api/byok/presets and contain no secrets.
+
+let byokPresets = [];
+
+function loadByok() {
+  try { return JSON.parse(localStorage.getItem(BYOK_STORE_KEY) || "null"); }
+  catch { return null; }
+}
+function saveByok(cfg) { localStorage.setItem(BYOK_STORE_KEY, JSON.stringify(cfg)); }
+function clearByok() { localStorage.removeItem(BYOK_STORE_KEY); }
+function hasByok() {
+  const c = loadByok();
+  return !!(c && c.key && c.model);
+}
+
+async function loadByokPresets() {
+  const { ok, data } = await api("/api/byok/presets");
+  byokPresets = ok ? (data.presets || []) : [];
+  byokProvider.innerHTML = "";
+  for (const p of byokPresets) {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.label;
+    byokProvider.appendChild(opt);
+  }
+}
+
+// Applying a preset fills base URL / model / transport / docs so the user only
+// pastes a key. "custom" leaves the editable fields as-is.
+function applyPreset(id) {
+  const p = byokPresets.find((x) => x.id === id);
+  if (!p) return;
+  if (p.id !== "custom") {
+    byokBaseUrl.value = p.base_url || "";
+    byokModel.value = p.model || "";
+    byokTransport.value = p.transport || "openai";
+  }
+  if (p.key_hint) byokKey.placeholder = p.key_hint;
+  if (p.docs) {
+    byokDocs.href = p.docs;
+    byokDocs.classList.remove("hidden");
+  } else {
+    byokDocs.classList.add("hidden");
+  }
+}
+
+function openByokDialog() {
+  const cfg = loadByok();
+  if (byokPresets.length && !byokProvider.value) byokProvider.value = byokPresets[0].id;
+  // Prefill from a previously saved config, else from the current preset.
+  if (cfg) {
+    byokProvider.value = cfg.provider || byokProvider.value;
+    applyPreset(byokProvider.value);
+    byokBaseUrl.value = cfg.base_url || byokBaseUrl.value;
+    byokModel.value = cfg.model || byokModel.value;
+    byokTransport.value = cfg.transport || byokTransport.value;
+    byokKey.value = cfg.key || "";
+  } else {
+    applyPreset(byokProvider.value);
+    byokKey.value = "";
+  }
+  byokOverlay.classList.remove("hidden");
+  byokKey.focus();
+}
+
+function closeByokDialog() { byokOverlay.classList.add("hidden"); }
+
+// If the user picks the BYOK model but hasn't configured a key, open the dialog.
+function maybePromptByok() {
+  const m = availableModels.find((x) => x.id === modelSelect.value);
+  if (m && m.byok && !hasByok()) openByokDialog();
+}
+
+byokGear.addEventListener("click", openByokDialog);
+byokCancel.addEventListener("click", closeByokDialog);
+byokX.addEventListener("click", closeByokDialog);
+byokOverlay.addEventListener("click", (e) => {
+  if (e.target === byokOverlay) closeByokDialog();
+});
+byokProvider.addEventListener("change", () => applyPreset(byokProvider.value));
+byokClear.addEventListener("click", () => {
+  clearByok();
+  byokKey.value = "";
+  closeByokDialog();
+  addMessage("assistant", i18n.t("byok.cleared"));
+});
+byokForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const key = byokKey.value.trim();
+  const model = byokModel.value.trim();
+  const transport = byokTransport.value;
+  const base_url = byokBaseUrl.value.trim();
+  if (!key) { byokKey.focus(); addMessage("assistant", i18n.t("byok.err.key")); return; }
+  if (!model) { byokModel.focus(); addMessage("assistant", i18n.t("byok.err.model")); return; }
+  if (transport === "openai" && !base_url) {
+    byokBaseUrl.focus(); addMessage("assistant", i18n.t("byok.err.base_url")); return;
+  }
+  saveByok({ key, model, base_url, transport, provider: byokProvider.value });
+  closeByokDialog();
+  addMessage("assistant", i18n.t("byok.saved"));
+});
+
+// Build the request body shared by the blocking and streaming paths. Returns
+// the body object, or null when the BYOK model is selected but not configured
+// (in which case it surfaces the dialog + a message and the caller must abort).
+function composeBody(prompt, editing) {
+  const body = { prompt };
+  const modelId = selectedModelId();
+  if (modelId) body.model = modelId;
+  // BYOK: attach the user's own credentials (stored locally) for this request.
+  if (modelId === "byok") {
+    const cfg = loadByok();
+    if (!cfg || !cfg.key || !cfg.model) {
+      setStatus("status.error");
+      addMessage("assistant", i18n.t("byok.not_configured"));
+      openByokDialog();
+      return null;
+    }
+    body.byok_key = cfg.key;
+    body.byok_model = cfg.model;
+    body.byok_base_url = cfg.base_url || "";
+    body.byok_transport = cfg.transport || "openai";
+  }
+  if (editing) {
+    // Logged-in saved app -> iterate by project_id (server holds the base).
+    // Guest -> send the current html so it can still be edited client-side.
+    if (currentProjectId != null) body.project_id = currentProjectId;
+    else body.base_html = currentHtml;
+  }
+  return body;
+}
+
+// Once a generation finishes, mirror it into the UI + local state the same way
+// for both the blocking and streaming paths: render the preview, enter edit
+// mode, report where it was saved, and refresh the project list.
+function afterGenerate({ prompt, editing, html, provider, projectId, iterated }) {
+  showPreview(html);
+  setStatus("status.ready");
+  if (!editing) currentTitle = prompt;
+  enterEditMode({ projectId, html, title: currentTitle });
+
+  const didEdit = editing || iterated;
+  let saved = "";
+  if (projectId) {
+    saved = i18n.t(didEdit ? "msg.updated_suffix" : "msg.saved_suffix", { id: projectId });
+  }
+  addMessage("assistant", i18n.t(didEdit ? "msg.done_edit" : "msg.done", { provider, saved }));
+  if (projectId) loadProjects();
+}
+
+// Blocking generation — kept as a fallback for when the streaming endpoint is
+// unreachable (older deploy, proxy that buffers SSE, fetch/stream unsupported).
 async function generate(prompt) {
   const editing = currentHtml != null;
+  const body = composeBody(prompt, editing);
+  if (!body) return;   // BYOK not configured; composeBody handled the UI
   sendBtn.disabled = true;
   setStatus("status.generating");
   addMessage("assistant", i18n.t(editing ? "msg.editing" : "msg.generating"));
   try {
-    const body = { prompt };
-    const modelId = selectedModelId();
-    if (modelId) body.model = modelId;
-    if (editing) {
-      // Logged-in saved app -> iterate by project_id (server holds the base).
-      // Guest -> send the current html so it can still be edited client-side.
-      if (currentProjectId != null) body.project_id = currentProjectId;
-      else body.base_html = currentHtml;
-    }
     const { ok, status, data } = await api("/api/generate", {
       method: "POST",
       body: JSON.stringify(body),
     });
     if (!ok) throw new Error(data.error || `HTTP ${status}`);
-    showPreview(data.html);
-    setStatus("status.ready");
-
-    // Remember the produced app so the next message keeps iterating on it.
-    if (!editing) currentTitle = prompt;
-    enterEditMode({ projectId: data.project_id, html: data.html, title: currentTitle });
-
-    const didEdit = editing || data.iterated;
-    let saved = "";
-    if (data.project_id) {
-      saved = i18n.t(didEdit ? "msg.updated_suffix" : "msg.saved_suffix", { id: data.project_id });
-    }
-    addMessage("assistant", i18n.t(didEdit ? "msg.done_edit" : "msg.done", {
-      provider: data.provider, saved,
-    }));
-    if (data.project_id) loadProjects();
+    afterGenerate({
+      prompt, editing, html: data.html, provider: data.provider,
+      projectId: data.project_id, iterated: data.iterated,
+    });
   } catch (err) {
     setStatus("status.error");
     addMessage("assistant", i18n.t("msg.error", { msg: err.message }));
@@ -278,13 +430,161 @@ async function generate(prompt) {
   }
 }
 
+// A live assistant message that grows as SSE events arrive: a collapsible
+// "reasoning" block (the model's chain-of-thought) and a live code-progress
+// <pre>. Both stay hidden until their first token. Returns handles the stream
+// dispatcher uses to append text incrementally, keeping the view pinned to the
+// bottom only while the user is already near it.
+function addStreamingMessage() {
+  const div = document.createElement("div");
+  div.className = "msg assistant streaming";
+
+  const status = document.createElement("p");
+  status.className = "stream-status";
+  status.textContent = i18n.t("status.streaming");
+  div.appendChild(status);
+
+  const details = document.createElement("details");
+  details.className = "reasoning hidden";
+  details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = i18n.t("app.reasoning");
+  const reasoningBody = document.createElement("div");
+  reasoningBody.className = "reasoning-body";
+  details.append(summary, reasoningBody);
+  div.appendChild(details);
+
+  const codeWrap = document.createElement("div");
+  codeWrap.className = "code-progress hidden";
+  const codeLabel = document.createElement("div");
+  codeLabel.className = "code-label";
+  codeLabel.textContent = i18n.t("app.generating_code");
+  const codePre = document.createElement("pre");
+  codeWrap.append(codeLabel, codePre);
+  div.appendChild(codeWrap);
+
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  const nearBottom = () =>
+    messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+  const stick = (fn) => { const s = nearBottom(); fn(); if (s) messagesEl.scrollTop = messagesEl.scrollHeight; };
+
+  return {
+    setModel(label) {
+      status.textContent = i18n.t("status.streaming_model", { model: label });
+    },
+    reasoning(delta) {
+      stick(() => { details.classList.remove("hidden"); reasoningBody.textContent += delta; });
+    },
+    content(delta) {
+      stick(() => { codeWrap.classList.remove("hidden"); codePre.textContent += delta; });
+    },
+    done() {
+      div.classList.remove("streaming");
+      details.open = false;   // collapse the thinking to keep the log tidy
+      status.remove();
+    },
+    remove() { div.remove(); },
+  };
+}
+
+// Streaming generation (primary path). Consumes the SSE stream from
+// /api/generate/stream, showing reasoning + code as they're produced. Falls
+// back to the blocking generate() if the stream endpoint is unreachable.
+async function generateStream(prompt) {
+  const editing = currentHtml != null;
+  const body = composeBody(prompt, editing);
+  if (!body) return;   // BYOK not configured; composeBody handled the UI
+
+  sendBtn.disabled = true;
+  setStatus("status.generating");
+  const stream = addStreamingMessage();
+
+  let res;
+  try {
+    res = await fetch("/api/generate/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    stream.remove();          // couldn't reach the stream endpoint
+    return generate(prompt);  // degrade to the blocking path
+  }
+
+  if (res.status === 404) {   // endpoint missing (older deploy) -> fallback
+    stream.remove();
+    sendBtn.disabled = false;
+    return generate(prompt);
+  }
+  if (!res.ok || !res.body) {
+    stream.remove();
+    let data = {};
+    try { data = await res.json(); } catch { /* no body */ }
+    setStatus("status.error");
+    addMessage("assistant", i18n.t("msg.error", { msg: data.error || `HTTP ${res.status}` }));
+    sendBtn.disabled = false;
+    return;
+  }
+
+  let finalHtml = null, provider = "", projectId = null, iterated = false, errored = false;
+  const dispatch = (evt) => {
+    switch (evt.type) {
+      case "model": provider = evt.label; stream.setModel(evt.label); break;
+      case "reasoning": stream.reasoning(evt.delta); break;
+      case "content": stream.content(evt.delta); break;
+      case "error":
+        errored = true;
+        setStatus("status.error");
+        addMessage("assistant", i18n.t("msg.error", { msg: evt.message }));
+        break;
+      case "done":
+        finalHtml = evt.html;
+        provider = evt.provider || provider;
+        projectId = evt.project_id;
+        iterated = evt.iterated;
+        break;
+    }
+  };
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = frame.split("\n").find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        try { dispatch(JSON.parse(line.slice(5).trim())); }
+        catch { /* ignore a malformed frame */ }
+      }
+    }
+  } catch (err) {
+    errored = true;
+    setStatus("status.error");
+    addMessage("assistant", i18n.t("msg.error", { msg: err.message }));
+  }
+
+  stream.done();
+  if (errored || finalHtml == null) { sendBtn.disabled = false; return; }
+  afterGenerate({ prompt, editing, html: finalHtml, provider, projectId, iterated });
+  sendBtn.disabled = false;
+}
+
 composer.addEventListener("submit", (e) => {
   e.preventDefault();
   const prompt = promptEl.value.trim();
   if (!prompt) return;
   addMessage("user", prompt);
   promptEl.value = "";
-  generate(prompt);
+  generateStream(prompt);
 });
 
 refreshBtn.addEventListener("click", loadProjects);
@@ -426,6 +726,7 @@ window.addEventListener("langchange", () => {
 (async function init() {
   renderMode();
   await loadModels();
+  await loadByokPresets();
   await loadMe();
   await loadProjects();
 })();

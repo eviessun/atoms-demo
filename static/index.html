@@ -16,6 +16,8 @@
       <label class="model-picker" id="model-picker">
         <span class="model-picker-label" data-i18n="app.model">模型</span>
         <select id="model-select" data-i18n-tooltip="app.model_tooltip" title="选择生成模型 / Choose the model"></select>
+        <button type="button" class="byok-gear" id="byok-gear"
+                data-i18n-tooltip="app.model_byok_settings" title="配置自备 Key">⚙</button>
       </label>
       <button class="lang-toggle" id="lang-toggle" data-i18n="lang.toggle"
               data-i18n-tooltip="lang.switch_tooltip" title="切换语言 / Switch language">🌐 中</button>
@@ -100,6 +102,55 @@
       </div>
     </section>
   </main>
+
+  <!-- BYOK dialog: user enters their own API key + model (stored only in the
+       browser; sent per-request; never persisted server-side). -->
+  <div class="modal-overlay hidden" id="byok-overlay">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="byok-title">
+      <div class="modal-head">
+        <h2 id="byok-title" data-i18n="byok.title">自定义模型（自备 Key）</h2>
+        <button type="button" class="modal-close" id="byok-x" aria-label="close">✕</button>
+      </div>
+      <p class="modal-intro" data-i18n="byok.intro"></p>
+      <form id="byok-form" class="byok-form">
+        <label class="byok-field">
+          <span data-i18n="byok.provider">服务商</span>
+          <select id="byok-provider"></select>
+        </label>
+        <label class="byok-field">
+          <span data-i18n="byok.transport">接口类型</span>
+          <select id="byok-transport">
+            <option value="openai" data-i18n="byok.transport_openai">OpenAI 兼容</option>
+            <option value="anthropic" data-i18n="byok.transport_anthropic">Anthropic (Claude)</option>
+          </select>
+        </label>
+        <label class="byok-field">
+          <span data-i18n="byok.base_url">API 地址（Base URL）</span>
+          <input type="text" id="byok-base-url" autocomplete="off" spellcheck="false"
+                 placeholder="https://api.deepseek.com/v1" />
+        </label>
+        <label class="byok-field">
+          <span data-i18n="byok.model">模型名称</span>
+          <input type="text" id="byok-model" autocomplete="off" spellcheck="false"
+                 placeholder="deepseek-chat" />
+        </label>
+        <label class="byok-field">
+          <span data-i18n="byok.key">API Key</span>
+          <input type="password" id="byok-key" autocomplete="off" spellcheck="false"
+                 placeholder="sk-..." />
+        </label>
+        <a class="byok-docs hidden" id="byok-docs" href="#" target="_blank" rel="noopener"
+           data-i18n="byok.docs">如何申请 Key ↗</a>
+        <p class="byok-security" data-i18n="byok.security"></p>
+        <div class="byok-actions">
+          <button type="button" class="ghost" id="byok-clear" data-i18n="byok.clear">清除已存 Key</button>
+          <span class="spacer"></span>
+          <button type="button" class="ghost" id="byok-cancel" data-i18n="byok.cancel">取消</button>
+          <button type="submit" id="byok-save" data-i18n="byok.save">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script src="/static/i18n.js"></script>
   <script src="/static/app.js"></script>

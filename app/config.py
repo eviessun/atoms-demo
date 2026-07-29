@@ -45,15 +45,25 @@ class ModelSpec:
     base_url: str = ""
     api_key_env: str = ""
     free: bool = False
+    # BYOK ("bring your own key"): a placeholder entry the UI always offers. The
+    # real transport/model/base_url/key arrive per-request from the browser and
+    # are used transiently — never read from the environment, never persisted.
+    byok: bool = False
+    # An inline key supplied per-request (BYOK). When set it wins over api_key_env
+    # so we never need to stash a user's key in the environment.
+    inline_key: str = ""
 
     @property
     def api_key(self) -> str:
+        if self.inline_key:
+            return self.inline_key
         return os.getenv(self.api_key_env, "").strip() if self.api_key_env else ""
 
     @property
     def available(self) -> bool:
-        """Keyless transports are always available; keyed ones need their env var."""
-        if self.transport == "mock":
+        """Keyless transports are always available; keyed ones need their env var.
+        BYOK is always offered (the key comes from the request, not the server)."""
+        if self.transport == "mock" or self.byok:
             return True
         return bool(self.api_key)
 
@@ -67,6 +77,16 @@ MODEL_REGISTRY: list[ModelSpec] = [
         label="Mock (no key)",
         transport="mock",
         free=True,
+    ),
+    # --- BYOK: user brings their own key, entered in the browser -------------
+    # Always offered. The key/model/base_url arrive with each request and are
+    # used transiently — never stored on the server. Lets anyone plug in a
+    # big-name model (DeepSeek / Doubao / Kimi / OpenAI / ...) with their own key.
+    ModelSpec(
+        id="byok",
+        label="自定义（自备 Key）",
+        transport="openai",
+        byok=True,
     ),
     # --- DeepSeek (direct) — OpenAI-compatible -------------------------------
     ModelSpec(
@@ -110,7 +130,7 @@ MODEL_REGISTRY: list[ModelSpec] = [
     # check https://openrouter.ai/models?max_price=0 for a current slug.
     ModelSpec(
         id="openrouter-nemotron-free",
-        label="Nemotron 3 Super 120B (OpenRouter free)",
+        label="Nemotron 3 Super 120B",
         transport="openai",
         model="nvidia/nemotron-3-super-120b-a12b:free",
         base_url="https://openrouter.ai/api/v1",
@@ -119,9 +139,36 @@ MODEL_REGISTRY: list[ModelSpec] = [
     ),
     ModelSpec(
         id="openrouter-gptoss-free",
-        label="GPT-OSS 20B (OpenRouter free)",
+        label="GPT-OSS 20B",
         transport="openai",
         model="openai/gpt-oss-20b:free",
+        base_url="https://openrouter.ai/api/v1",
+        api_key_env="OPENROUTER_API_KEY",
+        free=True,
+    ),
+    ModelSpec(
+        id="openrouter-nemotron-ultra-free",
+        label="Nemotron 3 Ultra 550B",
+        transport="openai",
+        model="nvidia/nemotron-3-ultra-550b-a55b:free",
+        base_url="https://openrouter.ai/api/v1",
+        api_key_env="OPENROUTER_API_KEY",
+        free=True,
+    ),
+    ModelSpec(
+        id="openrouter-gemma-free",
+        label="Gemma 4 31B",
+        transport="openai",
+        model="google/gemma-4-31b-it:free",
+        base_url="https://openrouter.ai/api/v1",
+        api_key_env="OPENROUTER_API_KEY",
+        free=True,
+    ),
+    ModelSpec(
+        id="openrouter-nemotron-nano-free",
+        label="Nemotron 3 Nano 30B",
+        transport="openai",
+        model="nvidia/nemotron-3-nano-30b-a3b:free",
         base_url="https://openrouter.ai/api/v1",
         api_key_env="OPENROUTER_API_KEY",
         free=True,
@@ -159,6 +206,56 @@ def get_model(model_id: str | None) -> ModelSpec | None:
 def available_models() -> list[ModelSpec]:
     """Models the UI should offer: those with a configured key, plus keyless mock."""
     return [m for m in MODEL_REGISTRY if m.available]
+
+
+# BYOK presets shown in the "自定义（自备 Key）" dialog. Each fills in the
+# transport + base URL + a sensible default model name for a well-known
+# provider, so the user only has to paste a key (and optionally tweak the
+# model). `transport` is "openai" (OpenAI-compatible) or "anthropic".
+# NOTE: these are hints for the UI only; the server validates the final values.
+BYOK_PRESETS: list[dict] = [
+    {"id": "deepseek", "label": "DeepSeek", "transport": "openai",
+     "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat",
+     "key_hint": "sk-...", "docs": "https://platform.deepseek.com/api_keys"},
+    {"id": "doubao", "label": "豆包 / 火山方舟", "transport": "openai",
+     "base_url": "https://ark.cn-beijing.volces.com/api/v3", "model": "doubao-seed-1-6-250615",
+     "key_hint": "火山方舟 API Key", "docs": "https://console.volcengine.com/ark"},
+    {"id": "kimi", "label": "Kimi / Moonshot", "transport": "openai",
+     "base_url": "https://api.moonshot.cn/v1", "model": "moonshot-v1-8k",
+     "key_hint": "sk-...", "docs": "https://platform.moonshot.cn/console/api-keys"},
+    {"id": "openrouter", "label": "OpenRouter", "transport": "openai",
+     "base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-chat",
+     "key_hint": "sk-or-v1-...", "docs": "https://openrouter.ai/keys"},
+    {"id": "openai", "label": "OpenAI", "transport": "openai",
+     "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini",
+     "key_hint": "sk-...", "docs": "https://platform.openai.com/api-keys"},
+    {"id": "anthropic", "label": "Claude / Anthropic", "transport": "anthropic",
+     "base_url": "https://api.anthropic.com/v1", "model": "claude-3-5-sonnet-20241022",
+     "key_hint": "sk-ant-...", "docs": "https://console.anthropic.com/settings/keys"},
+    {"id": "custom", "label": "自定义 (OpenAI 兼容)", "transport": "openai",
+     "base_url": "", "model": "", "key_hint": "your key",
+     "docs": ""},
+]
+
+
+def build_byok_spec(
+    api_key: str, model: str, base_url: str = "", transport: str = "openai"
+) -> ModelSpec:
+    """Build a transient ModelSpec from a per-request BYOK payload.
+
+    The key is carried on the spec's `inline_key` (used once, never persisted or
+    written to the environment). transport is normalized to openai/anthropic.
+    """
+    t = "anthropic" if transport == "anthropic" else "openai"
+    return ModelSpec(
+        id="byok",
+        label="自定义（自备 Key）",
+        transport=t,
+        model=(model or "").strip(),
+        base_url=(base_url or "").strip().rstrip("/"),
+        byok=True,
+        inline_key=(api_key or "").strip(),
+    )
 
 
 class Settings:
