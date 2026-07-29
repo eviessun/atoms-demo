@@ -36,12 +36,10 @@ def generate(req: GenerateRequest):
     if not prompt:
         return JSONResponse(status_code=400, content={"error": "prompt is required"})
     try:
-        html = generate_app_html(prompt)
-    except NotImplementedError as exc:
-        return JSONResponse(status_code=501, content={"error": str(exc)})
+        html, used_provider = generate_app_html(prompt)
     except Exception as exc:  # noqa: BLE001 — surface upstream errors to the UI
         return JSONResponse(status_code=502, content={"error": f"generation failed: {exc}"})
-    return {"html": html, "provider": settings.LLM_PROVIDER}
+    return {"html": html, "provider": used_provider}
 
 
 @app.get("/")

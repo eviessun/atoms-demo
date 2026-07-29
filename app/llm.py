@@ -6,9 +6,13 @@ touches this file — the rest of the app calls `generate_app_html` regardless o
 
 Providers:
   - mock:      no API key, returns a working demo app (great for building/deploying first)
-  - openai:    OpenAI-compatible chat completions
-  - anthropic: Claude messages API
-  - atoms:     placeholder — wire up once the endpoint/format is known
+  - openai:    ANY OpenAI-compatible endpoint. This is the "free model" seam — point
+               OPENAI_BASE_URL/OPENAI_MODEL at a free tier (OpenRouter/Groq/local) now,
+               and swap to gpt-4o / etc. later with only env-var changes.
+  - anthropic: Claude messages API (premium option for later)
+
+Note: "Atoms" is an agent *platform* credit, not an LLM API, so it is intentionally
+not a provider here. Upgrading to a stronger model = change env vars, not code.
 """
 from __future__ import annotations
 
@@ -89,9 +93,14 @@ def _mock_html(prompt: str) -> str:
 
 
 def _openai_html(prompt: str) -> str:
+    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+    # OpenRouter (a common free-tier gateway) recommends these; harmless elsewhere.
+    if "openrouter.ai" in settings.OPENAI_BASE_URL:
+        headers["HTTP-Referer"] = "https://atoms-demo-lted.onrender.com"
+        headers["X-Title"] = settings.APP_NAME
     resp = httpx.post(
         f"{settings.OPENAI_BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
+        headers=headers,
         json={
             "model": settings.OPENAI_MODEL,
             "messages": [
@@ -125,15 +134,26 @@ def _anthropic_html(prompt: str) -> str:
     return _strip_code_fences(resp.json()["content"][0]["text"])
 
 
-def generate_app_html(prompt: str) -> str:
-    """Turn a natural-language request into a self-contained HTML app string."""
-    provider = settings.LLM_PROVIDER
+def _generate_with_provider(provider: str, prompt: str) -> str:
     if provider == "openai":
         return _openai_html(prompt)
     if provider == "anthropic":
         return _anthropic_html(prompt)
-    if provider == "atoms":
-        # TODO: wire up once the Atoms endpoint/format is known (likely OpenAI-compatible).
-        raise NotImplementedError("Atoms provider not configured yet.")
-    # default: mock (no key required)
+    # default / "mock": no key required
     return _mock_html(prompt)
+
+
+def generate_app_html(prompt: str) -> tuple[str, str]:
+    """Turn a request into HTML. Returns (html, provider_actually_used).
+
+    If a real provider is configured but fails (bad key, quota, network), and
+    LLM_FALLBACK_TO_MOCK is on, we degrade to the mock generator instead of
+    failing the request — so live demos never hard-error on the core action.
+    """
+    provider = settings.LLM_PROVIDER
+    try:
+        return _generate_with_provider(provider, prompt), provider
+    except Exception:
+        if provider != "mock" and settings.LLM_FALLBACK_TO_MOCK:
+            return _mock_html(prompt), "mock (fallback)"
+        raise
