@@ -1,5 +1,9 @@
 # Render deployment blueprint.
 # On Render: New + -> Blueprint -> connect this repo -> it reads this file.
+#
+# 密钥怎么处理：带 `sync: false` 的变量 Render 不会从这个文件取值，而是在
+# Dashboard 里让你手动填（且不写进 git）。所以真实 key 只存在于 Render 后台，
+# 仓库里永远看不到——这和本地把 key 只放进被 .gitignore 忽略的 .env 是一个道理。
 services:
   - type: web
     name: atoms-demo
@@ -11,7 +15,37 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"
-      # LLM provider — starts in keyless "mock" mode so the deploy works immediately.
-      # Switch to openai/anthropic/atoms and add the key in the Render dashboard later.
-      - key: LLM_PROVIDER
+
+      # 首屏默认选中的模型 id（非密钥，明文写在这里没问题）。
+      # 想 0 成本可改成 openrouter-nemotron-free，但记得下面填 OPENROUTER_API_KEY。
+      - key: DEFAULT_MODEL_ID
         value: mock
+
+      # 选中的模型报错时降级到 mock，避免线上演示硬失败。
+      - key: LLM_FALLBACK_TO_MOCK
+        value: "true"
+
+      # --- 以下都是密钥：sync: false => 在 Render Dashboard 手动填，不进 git ---
+      # 只填你要用的那几个；没填 key 的模型不会出现在下拉里。
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DOUBAO_API_KEY
+        sync: false
+      - key: MOONSHOT_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # 数据库连接串也是密钥（不填则用容器内 SQLite，重新部署会丢数据）。
+      - key: DATABASE_URL
+        sync: false
+
+      # --- 非密钥的模型微调项（可选，明文即可）---
+      - key: DOUBAO_MODEL
+        value: doubao-seed-1-6-250615
+      - key: MOONSHOT_MODEL
+        value: moonshot-v1-8k

@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth, db
-from .config import settings
+from .config import available_models, settings
 from .llm import generate_app_html
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,6 +39,8 @@ def _startup() -> None:
 
 class GenerateRequest(BaseModel):
     prompt: str
+    # Which model to use (id from /api/models). Absent => server default model.
+    model: str | None = None
     # Iterate loop (all optional; absent => build a brand-new app):
     #  - project_id: modify this saved project in place (logged-in; server holds
     #    the authoritative current HTML, so the client can't forge the base).
@@ -52,11 +54,31 @@ class AuthRequest(BaseModel):
     password: str
 
 
-# --- health --------------------------------------------------------------
+# --- health + models -----------------------------------------------------
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "app": settings.APP_NAME, "llm_provider": settings.LLM_PROVIDER}
+    return {
+        "status": "ok",
+        "app": settings.APP_NAME,
+        "default_model": settings.default_model_id(),
+    }
+
+
+@app.get("/api/models")
+def models():
+    """List the models the UI may offer (Trae-style dropdown).
+
+    Only models whose API key env var is configured are returned (plus keyless
+    mock). API keys themselves are NEVER included — the client only gets ids and
+    labels and sends an id back on /api/generate."""
+    return {
+        "models": [
+            {"id": m.id, "label": m.label, "free": m.free, "transport": m.transport}
+            for m in available_models()
+        ],
+        "default": settings.default_model_id(),
+    }
 
 
 # --- auth ----------------------------------------------------------------
@@ -153,7 +175,7 @@ def generate(req: GenerateRequest, request: Request):
         base_html = req.base_html
 
     try:
-        html, used_provider = generate_app_html(prompt, base_html)
+        html, used_provider = generate_app_html(prompt, base_html, model_id=req.model)
     except Exception as exc:  # noqa: BLE001 — surface upstream errors to the UI
         return JSONResponse(status_code=502, content={"error": f"generation failed: {exc}"})
 

@@ -13,7 +13,10 @@
       <span data-i18n="brand">Atoms Demo</span>
     </div>
     <div class="topbar-right">
-      <div class="badge" id="provider-badge">provider: …</div>
+      <label class="model-picker" id="model-picker">
+        <span class="model-picker-label" data-i18n="app.model">模型</span>
+        <select id="model-select" data-i18n-tooltip="app.model_tooltip" title="选择生成模型 / Choose the model"></select>
+      </label>
       <button class="lang-toggle" id="lang-toggle" data-i18n="lang.toggle"
               data-i18n-tooltip="lang.switch_tooltip" title="切换语言 / Switch language">🌐 中</button>
       <div class="auth-box" id="auth-box">
@@ -23,25 +26,19 @@
   </header>
 
   <main class="layout">
-    <!-- Left: live preview -->
-    <section class="preview-panel">
-      <div class="preview-toolbar">
-        <span data-i18n="app.preview">实时预览</span>
-        <span class="status" id="status" data-i18n="status.idle">空闲</span>
+    <!-- Left: saved projects -->
+    <aside class="projects-panel">
+      <div class="projects-head">
+        <span data-i18n="app.projects">我的项目</span>
+        <button id="refresh-projects" title="Refresh" class="icon-btn">⟳</button>
       </div>
-      <div class="preview-body">
-        <div class="preview-placeholder" id="preview-placeholder">
-          <div class="ph-icon">🖼️</div>
-          <p class="ph-title" data-i18n="app.preview_ph_title">应用预览会显示在这里</p>
-          <p class="ph-hint" data-i18n="app.preview_ph_hint">在左侧描述一个应用，然后点击“生成”。</p>
-        </div>
-        <iframe id="preview" title="preview" class="hidden"
-                sandbox="allow-scripts allow-forms allow-modals"></iframe>
-      </div>
-    </section>
+      <ul class="projects-list" id="projects-list">
+        <li class="empty" id="projects-empty" data-i18n="app.projects_empty_guest">登录后即可保存并回看你的应用。</li>
+      </ul>
+    </aside>
 
-    <!-- Drag to resize the preview panel (collapsible to 0) -->
-    <div class="resizer" data-target="preview" title="拖动调整宽度 / Drag to resize"></div>
+    <!-- Drag to resize the projects panel (collapsible to 0) -->
+    <div class="resizer" data-target="projects" title="拖动调整宽度 / Drag to resize"></div>
 
     <!-- Middle: chat / prompt panel (flexible — absorbs resize) -->
     <section class="chat-panel">
@@ -64,19 +61,44 @@
       </form>
     </section>
 
-    <!-- Drag to resize the projects panel (collapsible to 0) -->
-    <div class="resizer" data-target="projects" title="拖动调整宽度 / Drag to resize"></div>
+    <!-- Drag to resize the preview panel (collapsible to 0) -->
+    <div class="resizer" data-target="preview" title="拖动调整宽度 / Drag to resize"></div>
 
-    <!-- Right: saved projects -->
-    <aside class="projects-panel">
-      <div class="projects-head">
-        <span data-i18n="app.projects">我的项目</span>
-        <button id="refresh-projects" title="Refresh" class="icon-btn">⟳</button>
+    <!-- Right: live preview -->
+    <section class="preview-panel">
+      <div class="preview-toolbar">
+        <span data-i18n="app.preview">实时预览</span>
+        <span class="status" id="status" data-i18n="status.idle">空闲</span>
       </div>
-      <ul class="projects-list" id="projects-list">
-        <li class="empty" id="projects-empty" data-i18n="app.projects_empty_guest">登录后即可保存并回看你的应用。</li>
-      </ul>
-    </aside>
+      <div class="preview-body">
+        <div class="preview-placeholder" id="preview-placeholder">
+          <div class="ph-icon" aria-hidden="true">
+            <svg viewBox="0 0 120 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img">
+              <!-- app window -->
+              <rect x="10" y="14" width="100" height="72" rx="10"
+                    fill="var(--tint)" stroke="var(--tint-border)" stroke-width="2"/>
+              <!-- title bar dots -->
+              <line x1="10" y1="30" x2="110" y2="30" stroke="var(--tint-border)" stroke-width="2"/>
+              <circle cx="21" cy="22" r="2.4" fill="var(--accent)" opacity="0.55"/>
+              <circle cx="30" cy="22" r="2.4" fill="var(--accent)" opacity="0.3"/>
+              <circle cx="39" cy="22" r="2.4" fill="var(--accent)" opacity="0.3"/>
+              <!-- content skeleton lines -->
+              <rect x="24" y="44" width="46" height="6" rx="3" fill="var(--accent)" opacity="0.35"/>
+              <rect x="24" y="58" width="72" height="5" rx="2.5" fill="var(--muted)" opacity="0.35"/>
+              <rect x="24" y="69" width="58" height="5" rx="2.5" fill="var(--muted)" opacity="0.35"/>
+              <!-- generate sparkle -->
+              <path d="M92 40 l2.6 6.4 6.4 2.6 -6.4 2.6 -2.6 6.4 -2.6 -6.4 -6.4 -2.6 6.4 -2.6z"
+                    fill="var(--accent)"/>
+              <circle cx="104" cy="38" r="2.2" fill="var(--accent)" opacity="0.7"/>
+            </svg>
+          </div>
+          <p class="ph-title" data-i18n="app.preview_ph_title">应用预览会显示在这里</p>
+          <p class="ph-hint" data-i18n="app.preview_ph_hint">在左侧描述一个应用，然后点击“生成”。</p>
+        </div>
+        <iframe id="preview" title="preview" class="hidden"
+                sandbox="allow-scripts allow-forms allow-modals"></iframe>
+      </div>
+    </section>
   </main>
 
   <script src="/static/i18n.js"></script>

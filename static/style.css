@@ -1,14 +1,44 @@
 :root {
-  --bg: #0b1120;
-  --panel: #111827;
-  --panel-2: #1e293b;
-  --border: #1f2937;
-  --text: #e5e7eb;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
+  /* Trae-style light theme. The two side panels share one light tone
+     (--panel); the middle chat column is one subtle layer lighter, using a
+     soft vertical gradient (--chat-grad). */
+  --bg: #e9ebef;          /* app canvas behind the panels */
+  --panel: #f5f6f8;       /* shared light tone for both side panels */
+  --panel-2: #eceef2;     /* cards / secondary surfaces / hover fills */
+  --border: #e3e6ec;      /* hairline borders */
+  --text: #1f2733;        /* primary text */
+  --muted: #6b7280;       /* secondary text */
+  --accent: #2f6feb;      /* action blue */
+  --accent-ink: #ffffff;  /* text/icon sitting on --accent */
+  --chat-grad: linear-gradient(180deg, #ffffff 0%, #f9fafc 100%);
+  /* Light tinted surface — stands out against the near-white chat column so
+     assistant bubbles / banners read as distinct cards. */
+  --tint: #e8eefc;
+  --tint-border: #d3ddf6;
 }
 
 * { box-sizing: border-box; }
+
+/* Subtle, theme-aware scrollbars — replaces the ugly default white track.
+   Thin, transparent track + a soft translucent thumb that only shows on hover.
+   Works the same on light or dark surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 110, 130, 0.35) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 110, 130, 0.32);
+  border-radius: 8px;
+  border: 2px solid transparent;   /* insets the thumb so it looks thinner */
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 110, 130, 0.55);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
 
 html, body {
   margin: 0;
@@ -31,13 +61,31 @@ html, body {
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; }
 .logo { color: var(--accent); font-size: 1.3rem; }
 
-.badge {
-  font-size: 0.75rem;
+/* Model picker (Trae-style dropdown) in the topbar */
+.model-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
   color: var(--muted);
+}
+.model-picker-label { white-space: nowrap; }
+.model-picker select {
+  background: transparent;
+  color: var(--text, #e2e8f0);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 220px;
 }
+.model-picker select:hover { border-color: var(--accent); }
+.model-picker select:focus { outline: none; border-color: var(--accent); }
+/* Options render in the OS menu, which is light — keep text readable there. */
+.model-picker select option { color: #0f172a; }
 
 .topbar-right { display: flex; align-items: center; gap: 12px; }
 
@@ -68,7 +116,7 @@ html, body {
 .auth-box .ghost:hover { border-color: var(--accent); color: var(--accent); }
 .auth-box .login-entry {
   background: var(--accent);
-  color: #05283a;
+  color: var(--accent-ink);
   text-decoration: none;
   font-weight: 700;
   font-size: 0.82rem;
@@ -78,7 +126,7 @@ html, body {
 .auth-box .login-entry:hover { opacity: 0.92; }
 
 .layout {
-  /* Column order: preview | resizer | chat (flex) | resizer | projects.
+  /* Column order: projects | resizer | chat (flex) | resizer | preview.
      The chat column is the flexible `1fr` filler, so it absorbs every resize
      and the layout can never dead-lock. The two side columns are px-sized and
      may collapse all the way to 0 (fully hidden), then be dragged back out. */
@@ -87,7 +135,7 @@ html, body {
   --resizer-w: 6px;
   display: grid;
   grid-template-columns:
-    var(--preview-w) var(--resizer-w) minmax(280px, 1fr) var(--resizer-w) var(--projects-w);
+    var(--projects-w) var(--resizer-w) minmax(280px, 1fr) var(--resizer-w) var(--preview-w);
   height: calc(100% - 56px);
 }
 
@@ -216,11 +264,12 @@ body.resizing-v iframe { pointer-events: none; }
 .projects-list li.item .meta { color: var(--muted); font-size: 0.72rem; margin-top: 4px; }
 .projects-list li.empty { color: var(--muted); font-size: 0.82rem; padding: 10px; }
 
-/* Chat panel (middle, flexible filler) */
+/* Chat panel (middle, flexible filler) — one subtle layer lighter than the
+   side panels, via a soft vertical gradient. */
 .chat-panel {
   display: flex;
   flex-direction: column;
-  background: var(--panel);
+  background: var(--chat-grad);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -243,8 +292,8 @@ body.resizing-v iframe { pointer-events: none; }
 }
 .msg p { margin: 0 0 6px; }
 .msg p:last-child { margin-bottom: 0; }
-.msg.assistant { background: var(--panel-2); }
-.msg.user { background: #0e3a54; align-self: flex-end; max-width: 90%; }
+.msg.assistant { background: var(--tint); border: 1px solid var(--tint-border); }
+.msg.user { background: var(--accent); color: var(--accent-ink); align-self: flex-end; max-width: 90%; }
 .hint { color: var(--muted); font-size: 0.82rem; }
 
 .composer {
@@ -264,8 +313,8 @@ body.resizing-v iframe { pointer-events: none; }
   justify-content: space-between;
   gap: 8px;
   padding: 6px 12px;
-  border-top: 1px solid var(--border);
-  background: var(--panel-2);
+  border-top: 1px solid var(--tint-border);
+  background: var(--tint);
   flex-shrink: 0;
 }
 .mode-label {
@@ -286,14 +335,14 @@ body.resizing-v iframe { pointer-events: none; }
   cursor: pointer;
   flex-shrink: 0;
 }
-.new-app:hover { background: var(--accent); color: #05283a; }
+.new-app:hover { background: var(--accent); color: var(--accent-ink); }
 
 textarea {
   width: 100%;
   flex: 1;             /* fill the (resizable) composer height */
   min-height: 0;
   resize: none;        /* height is driven by the drag divider above */
-  background: var(--bg);
+  background: #ffffff;
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -303,7 +352,7 @@ textarea {
 
 button {
   background: var(--accent);
-  color: #05283a;
+  color: var(--accent-ink);
   border: 0;
   border-radius: 10px;
   padding: 10px 16px;
@@ -352,7 +401,8 @@ button:disabled { opacity: 0.5; cursor: default; }
   color: var(--muted);
   background: var(--bg);
 }
-.preview-placeholder .ph-icon { font-size: 2.4rem; opacity: 0.8; }
+.preview-placeholder .ph-icon { width: 108px; margin-bottom: 6px; opacity: 0.95; }
+.preview-placeholder .ph-icon svg { width: 100%; height: auto; display: block; }
 .preview-placeholder .ph-title { margin: 4px 0 0; font-size: 1rem; color: var(--text); }
 .preview-placeholder .ph-hint { margin: 0; font-size: 0.85rem; }
 

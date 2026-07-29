@@ -9,7 +9,7 @@ const sendBtn = document.getElementById("send");
 const statusEl = document.getElementById("status");
 const previewEl = document.getElementById("preview");
 const previewPlaceholder = document.getElementById("preview-placeholder");
-const providerBadge = document.getElementById("provider-badge");
+const modelSelect = document.getElementById("model-select");
 const authBox = document.getElementById("auth-box");
 const projectsList = document.getElementById("projects-list");
 const refreshBtn = document.getElementById("refresh-projects");
@@ -20,7 +20,8 @@ const newAppBtn = document.getElementById("new-app");
 let currentUser = null;
 let lastProjects = [];       // cache so we can re-render on language change
 let statusKey = "status.idle";
-let lastProviderLabel = null;
+let availableModels = [];    // [{id,label,free,transport}] from /api/models
+const MODEL_STORE_KEY = "atoms:selectedModel";
 
 // Current app being worked on. When set, the composer iterates on it (edit mode)
 // instead of creating a new app. project_id is set for logged-in saved apps;
@@ -192,15 +193,46 @@ async function openProject(id) {
 
 // --- generate ------------------------------------------------------------
 
-async function loadHealth() {
-  const { ok, data } = await api("/api/health");
-  lastProviderLabel = ok ? data.llm_provider : "?";
-  updateProviderBadge();
+// --- model picker --------------------------------------------------------
+// Trae-style dropdown. The server only exposes models whose API key is set
+// (plus keyless mock); we send the chosen id with each generate request. The
+// pick is remembered in localStorage across reloads.
+
+function selectedModelId() {
+  return modelSelect.value || null;
 }
 
-function updateProviderBadge() {
-  providerBadge.textContent = `${i18n.t("app.provider")}: ${lastProviderLabel ?? "?"}`;
+function renderModelOptions() {
+  const remembered = localStorage.getItem(MODEL_STORE_KEY);
+  modelSelect.innerHTML = "";
+  for (const m of availableModels) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    // Flag free options so users can spot the no-cost picks at a glance.
+    opt.textContent = m.free ? `${m.label} · ${i18n.t("app.model_free")}` : m.label;
+    modelSelect.appendChild(opt);
+  }
+  // Restore the remembered pick if it's still available, else use the default.
+  const ids = availableModels.map((m) => m.id);
+  if (remembered && ids.includes(remembered)) {
+    modelSelect.value = remembered;
+  }
 }
+
+async function loadModels() {
+  const { ok, data } = await api("/api/models");
+  availableModels = ok ? (data.models || []) : [];
+  renderModelOptions();
+  // Fall back to server default if nothing valid is selected yet.
+  if (!modelSelect.value && data && data.default) {
+    const ids = availableModels.map((m) => m.id);
+    if (ids.includes(data.default)) modelSelect.value = data.default;
+  }
+}
+
+modelSelect.addEventListener("change", () => {
+  localStorage.setItem(MODEL_STORE_KEY, modelSelect.value);
+});
 
 async function generate(prompt) {
   const editing = currentHtml != null;
@@ -209,6 +241,8 @@ async function generate(prompt) {
   addMessage("assistant", i18n.t(editing ? "msg.editing" : "msg.generating"));
   try {
     const body = { prompt };
+    const modelId = selectedModelId();
+    if (modelId) body.model = modelId;
     if (editing) {
       // Logged-in saved app -> iterate by project_id (server holds the base).
       // Guest -> send the current html so it can still be edited client-side.
@@ -258,9 +292,9 @@ langToggle.addEventListener("click", () => i18n.toggle());
 newAppBtn.addEventListener("click", startNewApp);
 
 // --- resizable panels ----------------------------------------------------
-// Layout order: preview | resizer | chat(flex) | resizer | projects.
+// Layout order: projects | resizer | chat(flex) | resizer | preview.
 // The chat column is the flexible `1fr` filler that absorbs all resize deltas,
-// so dragging can never dead-lock. The two SIDE columns (preview, projects) are
+// so dragging can never dead-lock. The two SIDE columns (projects, preview) are
 // px-sized and may be dragged all the way to 0 (fully hidden), then dragged back
 // out again — like Trae/VS Code side panels.
 //
@@ -273,11 +307,12 @@ newAppBtn.addEventListener("click", startNewApp);
 
   const STORE_KEY = "atoms:panelWidths";
   // For each side divider: which CSS var it drives, and the sign that maps a
-  // rightward drag (+dx) onto a width change. The projects column sits on the
-  // right edge, so dragging its divider right SHRINKS it (sign -1).
+  // rightward drag (+dx) onto a width change. The projects column is on the
+  // LEFT edge, so dragging its divider right GROWS it (sign +1); the preview
+  // column is on the RIGHT edge, so dragging its divider right SHRINKS it (-1).
   const SIDE = {
-    preview:  { cssVar: "--preview-w",  sign: +1 },
-    projects: { cssVar: "--projects-w", sign: -1 },
+    projects: { cssVar: "--projects-w", sign: +1 },
+    preview:  { cssVar: "--preview-w",  sign: -1 },
   };
   const CHAT_MIN = 280;       // must match the grid's minmax() floor
   const COMPOSER_VAR = "--composer-h";
@@ -382,7 +417,7 @@ newAppBtn.addEventListener("click", startNewApp);
 window.addEventListener("langchange", () => {
   renderAuth();
   renderProjects(lastProjects);
-  updateProviderBadge();
+  renderModelOptions();
   renderMode();
   statusEl.textContent = i18n.t(statusKey);
 });
@@ -390,7 +425,7 @@ window.addEventListener("langchange", () => {
 // init
 (async function init() {
   renderMode();
-  await loadHealth();
+  await loadModels();
   await loadMe();
   await loadProjects();
 })();

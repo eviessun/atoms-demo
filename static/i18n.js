@@ -40,7 +40,9 @@
       // main app
       "app.login_entry": "登录 / 注册",
       "app.logout": "退出登录",
-      "app.provider": "模型",
+      "app.model": "模型",
+      "app.model_free": "免费",
+      "app.model_tooltip": "选择用于生成的模型",
       "app.intro": "描述一个应用，我来帮你生成，并在右侧预览。",
       "app.intro_hint": "试试：“一个带开始/暂停的番茄钟和任务清单”。",
       "app.prompt_ph": "描述你想要的应用…",
@@ -107,7 +109,9 @@
 
       "app.login_entry": "Log in / Register",
       "app.logout": "Log out",
-      "app.provider": "provider",
+      "app.model": "Model",
+      "app.model_free": "free",
+      "app.model_tooltip": "Choose the model used for generation",
       "app.intro": "Describe an app and I'll build it, then preview it on the right.",
       "app.intro_hint": "Try: “a pomodoro timer with start/pause and a task list”.",
       "app.prompt_ph": "Describe the app you want…",

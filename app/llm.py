@@ -1,18 +1,19 @@
 """LLM adapter layer.
 
 A single, swappable entry point (`generate_app_html`) that turns a natural-language
-request into a self-contained single-file HTML app string. Switching providers only
-touches this file — the rest of the app calls `generate_app_html` regardless of backend.
+request into a self-contained single-file HTML app string. It is driven by a
+`ModelSpec` from the registry in `config.py`, so which model runs is decided per
+request (the frontend dropdown sends a model id) — not baked in at import time.
 
-Providers:
+Transports (one per `ModelSpec.transport`):
   - mock:      no API key, returns a working demo app (great for building/deploying first)
-  - openai:    ANY OpenAI-compatible endpoint. This is the "free model" seam — point
-               OPENAI_BASE_URL/OPENAI_MODEL at a free tier (OpenRouter/Groq/local) now,
-               and swap to gpt-4o / etc. later with only env-var changes.
-  - anthropic: Claude messages API (premium option for later)
+  - openai:    ANY OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, DeepSeek,
+               Doubao/Volcano Ark, Kimi/Moonshot, local servers, ...). This is the
+               "free model" seam — pick a free entry in the dropdown at runtime.
+  - anthropic: Claude messages API (premium option)
 
-Note: "Atoms" is an agent *platform* credit, not an LLM API, so it is intentionally
-not a provider here. Upgrading to a stronger model = change env vars, not code.
+Adding a model = add a row to MODEL_REGISTRY + set its key env var; this file only
+needs a transport handler, which the OpenAI-compatible ones already share.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import textwrap
 
 import httpx
 
-from .config import settings
+from .config import ModelSpec, get_model, settings
 
 # The system prompt that instructs the model to output ONE self-contained HTML file.
 SYSTEM_PROMPT = textwrap.dedent(
@@ -153,10 +154,10 @@ def _mock_html(prompt: str, base_html: str | None = None) -> str:
     ).strip()
 
 
-def _openai_html(prompt: str, base_html: str | None = None) -> str:
-    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+def _openai_html(spec: ModelSpec, prompt: str, base_html: str | None = None) -> str:
+    headers = {"Authorization": f"Bearer {spec.api_key}"}
     # OpenRouter (a common free-tier gateway) recommends these; harmless elsewhere.
-    if "openrouter.ai" in settings.OPENAI_BASE_URL:
+    if "openrouter.ai" in spec.base_url:
         headers["HTTP-Referer"] = "https://atoms-demo-lted.onrender.com"
         headers["X-Title"] = settings.APP_NAME
     if base_html:
@@ -170,10 +171,10 @@ def _openai_html(prompt: str, base_html: str | None = None) -> str:
             {"role": "user", "content": prompt},
         ]
     resp = httpx.post(
-        f"{settings.OPENAI_BASE_URL}/chat/completions",
+        f"{spec.base_url}/chat/completions",
         headers=headers,
         json={
-            "model": settings.OPENAI_MODEL,
+            "model": spec.model,
             "messages": messages,
             "temperature": 0.7,
         },
@@ -183,17 +184,17 @@ def _openai_html(prompt: str, base_html: str | None = None) -> str:
     return _strip_code_fences(resp.json()["choices"][0]["message"]["content"])
 
 
-def _anthropic_html(prompt: str, base_html: str | None = None) -> str:
+def _anthropic_html(spec: ModelSpec, prompt: str, base_html: str | None = None) -> str:
     system = EDIT_SYSTEM_PROMPT if base_html else SYSTEM_PROMPT
     user = _edit_user_content(base_html, prompt) if base_html else prompt
     resp = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={
-            "x-api-key": settings.ANTHROPIC_API_KEY,
+            "x-api-key": spec.api_key,
             "anthropic-version": "2023-06-01",
         },
         json={
-            "model": settings.ANTHROPIC_MODEL,
+            "model": spec.model,
             "max_tokens": 4096,
             "system": system,
             "messages": [{"role": "user", "content": user}],
@@ -204,29 +205,38 @@ def _anthropic_html(prompt: str, base_html: str | None = None) -> str:
     return _strip_code_fences(resp.json()["content"][0]["text"])
 
 
-def _generate_with_provider(provider: str, prompt: str, base_html: str | None = None) -> str:
-    if provider == "openai":
-        return _openai_html(prompt, base_html)
-    if provider == "anthropic":
-        return _anthropic_html(prompt, base_html)
+def _generate_with_spec(spec: ModelSpec, prompt: str, base_html: str | None = None) -> str:
+    if spec.transport == "openai":
+        return _openai_html(spec, prompt, base_html)
+    if spec.transport == "anthropic":
+        return _anthropic_html(spec, prompt, base_html)
     # default / "mock": no key required
     return _mock_html(prompt, base_html)
 
 
-def generate_app_html(prompt: str, base_html: str | None = None) -> tuple[str, str]:
-    """Turn a request into HTML. Returns (html, provider_actually_used).
+def generate_app_html(
+    prompt: str, base_html: str | None = None, model_id: str | None = None
+) -> tuple[str, str]:
+    """Turn a request into HTML. Returns (html, model_label_actually_used).
+
+    `model_id` selects a registry entry (from the frontend dropdown). If it's
+    missing or unknown, we fall back to the configured default model.
 
     If base_html is given, the model edits that app in place (iterate loop);
     otherwise it builds a new app from scratch.
 
-    If a real provider is configured but fails (bad key, quota, network), and
+    If the selected model is configured but fails (bad key, quota, network), and
     LLM_FALLBACK_TO_MOCK is on, we degrade to the mock generator instead of
     failing the request — so live demos never hard-error on the core action.
     """
-    provider = settings.LLM_PROVIDER
+    spec = get_model(model_id) or get_model(settings.default_model_id())
+    # Guard against a model whose key isn't actually set (e.g. stale client pick).
+    if spec is None or not spec.available:
+        spec = get_model("mock")
+
     try:
-        return _generate_with_provider(provider, prompt, base_html), provider
+        return _generate_with_spec(spec, prompt, base_html), spec.label
     except Exception:
-        if provider != "mock" and settings.LLM_FALLBACK_TO_MOCK:
-            return _mock_html(prompt, base_html), "mock (fallback)"
+        if spec.transport != "mock" and settings.LLM_FALLBACK_TO_MOCK:
+            return _mock_html(prompt, base_html), f"{spec.label} → Mock (fallback)"
         raise
