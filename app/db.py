@@ -232,3 +232,30 @@ def get_project(user_id: int, project_id: int) -> Optional[Any]:
             "SELECT * FROM projects WHERE id = ? AND user_id = ?",
             (project_id, user_id),
         )
+
+
+def update_project_html(user_id: int, project_id: int, prompt: str, html: str, provider: str) -> bool:
+    """Update an existing project in place (iterate loop). Owner-scoped: the
+    WHERE clause includes user_id so a user can only modify their own project.
+    Returns True if a row was updated, False if not found / not owned.
+
+    `prompt` records the latest change request and `provider` the model that
+    produced this revision (the original create-time values are overwritten,
+    which is fine — the list view just shows the most recent state)."""
+    if IS_POSTGRES:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                _q(
+                    "UPDATE projects SET prompt = ?, html = ?, provider = ? "
+                    "WHERE id = ? AND user_id = ?"
+                ),
+                (prompt, html, provider, project_id, user_id),
+            )
+            return cur.rowcount > 0
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE projects SET prompt = ?, html = ?, provider = ? "
+            "WHERE id = ? AND user_id = ?",
+            (prompt, html, provider, project_id, user_id),
+        )
+        return cur.rowcount > 0

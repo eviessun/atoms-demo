@@ -39,6 +39,12 @@ def _startup() -> None:
 
 class GenerateRequest(BaseModel):
     prompt: str
+    # Iterate loop (all optional; absent => build a brand-new app):
+    #  - project_id: modify this saved project in place (logged-in; server holds
+    #    the authoritative current HTML, so the client can't forge the base).
+    #  - base_html: for guests (no saved project) — the current app HTML to edit.
+    project_id: int | None = None
+    base_html: str | None = None
 
 
 class AuthRequest(BaseModel):
@@ -55,15 +61,24 @@ def health():
 
 # --- auth ----------------------------------------------------------------
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _is_secure(request: Request) -> bool:
+    """Whether the original client request was HTTPS. Render (and most PaaS)
+    terminate TLS at a proxy and forward the real scheme in X-Forwarded-Proto,
+    so we trust that first and fall back to the direct scheme. This lets the
+    Secure cookie flag be correct in prod while still working over local HTTP."""
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    return (proto or request.url.scheme) == "https"
+
+
+def _set_session_cookie(response: Response, token: str, secure: bool) -> None:
     response.set_cookie(
         auth.SESSION_COOKIE, token,
-        httponly=True, samesite="lax", secure=True, max_age=60 * 60 * 24 * 30,
+        httponly=True, samesite="lax", secure=secure, max_age=60 * 60 * 24 * 30,
     )
 
 
 @app.post("/api/auth/register")
-def register(req: AuthRequest, response: Response):
+def register(req: AuthRequest, request: Request, response: Response):
     email = req.email.strip().lower()
     if not EMAIL_RE.match(email):
         return JSONResponse(status_code=400, content={"error": "invalid email"})
@@ -74,19 +89,19 @@ def register(req: AuthRequest, response: Response):
     user_id = db.create_user(email, auth.hash_password(req.password))
     token = auth.new_session_token()
     db.create_session(token, user_id)
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, _is_secure(request))
     return {"id": user_id, "email": email}
 
 
 @app.post("/api/auth/login")
-def login(req: AuthRequest, response: Response):
+def login(req: AuthRequest, request: Request, response: Response):
     email = req.email.strip().lower()
     row = db.get_user_by_email(email)
     if row is None or not auth.verify_password(req.password, row["password_hash"]):
         return JSONResponse(status_code=401, content={"error": "invalid email or password"})
     token = auth.new_session_token()
     db.create_session(token, row["id"])
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, _is_secure(request))
     return {"id": row["id"], "email": email}
 
 
@@ -108,21 +123,56 @@ def me(request: Request):
 
 @app.post("/api/generate")
 def generate(req: GenerateRequest, request: Request):
-    """Generate a self-contained HTML app; persist it if the user is logged in."""
+    """Generate a new app, or iterate on an existing one.
+
+    Create mode (no project_id/base_html): build a fresh app; persist it for
+    logged-in users as a new project.
+
+    Iterate mode: feed the current HTML back to the model so it edits in place.
+      - Logged-in + project_id: the base is loaded server-side from the user's
+        own project (owner-scoped), and the same project is updated in place.
+      - Otherwise: use the client-provided base_html (guest flow).
+    """
     prompt = (req.prompt or "").strip()
     if not prompt:
         return JSONResponse(status_code=400, content={"error": "prompt is required"})
+
+    user = auth.current_user(request)
+
+    # Resolve the base HTML to edit (if any), enforcing ownership for project_id.
+    base_html = None
+    target_project = None
+    if req.project_id is not None:
+        if user is None:
+            return JSONResponse(status_code=401, content={"error": "login required"})
+        target_project = db.get_project(user["id"], req.project_id)
+        if target_project is None:
+            return JSONResponse(status_code=404, content={"error": "project not found"})
+        base_html = target_project["html"]
+    elif req.base_html:
+        base_html = req.base_html
+
     try:
-        html, used_provider = generate_app_html(prompt)
+        html, used_provider = generate_app_html(prompt, base_html)
     except Exception as exc:  # noqa: BLE001 — surface upstream errors to the UI
         return JSONResponse(status_code=502, content={"error": f"generation failed: {exc}"})
 
+    # Persist: update in place when iterating on a saved project, else create.
     project_id = None
-    user = auth.current_user(request)
-    if user is not None:
+    iterated = False
+    if target_project is not None:
+        db.update_project_html(user["id"], target_project["id"], prompt, html, used_provider)
+        project_id = target_project["id"]
+        iterated = True
+    elif user is not None:
         project_id = db.create_project(user["id"], prompt, html, used_provider)
 
-    return {"html": html, "provider": used_provider, "project_id": project_id}
+    return {
+        "html": html,
+        "provider": used_provider,
+        "project_id": project_id,
+        "iterated": iterated,
+    }
 
 
 # --- projects ------------------------------------------------------------

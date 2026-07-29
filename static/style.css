@@ -78,43 +78,98 @@ html, body {
 .auth-box .login-entry:hover { opacity: 0.92; }
 
 .layout {
-  --chat-w: 360px;
+  /* Column order: preview | resizer | chat (flex) | resizer | projects.
+     The chat column is the flexible `1fr` filler, so it absorbs every resize
+     and the layout can never dead-lock. The two side columns are px-sized and
+     may collapse all the way to 0 (fully hidden), then be dragged back out. */
+  --preview-w: 420px;
   --projects-w: 240px;
   --resizer-w: 6px;
   display: grid;
   grid-template-columns:
-    var(--chat-w) var(--resizer-w) var(--projects-w) var(--resizer-w) 1fr;
+    var(--preview-w) var(--resizer-w) minmax(280px, 1fr) var(--resizer-w) var(--projects-w);
   height: calc(100% - 56px);
 }
 
-/* Draggable dividers between panels */
+/* Draggable dividers between panels.
+   Subtle by default (a hairline that blends into the chrome); on hover/drag a
+   slightly brighter thin line appears — no heavy fill. Follows the VS Code /
+   Linear pattern: generous hit area, minimal visuals. */
 .resizer {
-  background: var(--border);
-  cursor: col-resize;
   position: relative;
+  background: transparent;
+  cursor: col-resize;
   z-index: 5;
-  transition: background 0.15s;
 }
+/* The visible hairline, centered in the column. */
+.resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  background: var(--border);
+  transition: width 0.12s ease, background 0.12s ease;
+}
+/* Wider invisible hit area so the thin line is still easy to grab. */
 .resizer::after {
-  /* a wider invisible hit area so it's easy to grab */
   content: "";
   position: absolute;
   inset: 0 -3px;
 }
-.resizer:hover,
-.resizer.dragging { background: var(--accent); }
+.resizer:hover::before,
+.resizer.dragging::before {
+  width: 2px;
+  background: var(--muted);
+}
 
 /* While dragging: kill text selection and iframe pointer capture globally */
 body.resizing { cursor: col-resize; user-select: none; }
 body.resizing iframe { pointer-events: none; }
 
+/* Horizontal divider — drag up/down to resize the input area below it.
+   Same restrained treatment as the vertical resizer, rotated. */
+.resizer-h {
+  position: relative;
+  height: 6px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  z-index: 5;
+}
+.resizer-h::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 1px;
+  background: var(--border);
+  transition: height 0.12s ease, background 0.12s ease;
+}
+.resizer-h::after {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
+}
+.resizer-h:hover::before,
+.resizer-h.dragging::before {
+  height: 2px;
+  background: var(--muted);
+}
+body.resizing-v { cursor: row-resize; user-select: none; }
+body.resizing-v iframe { pointer-events: none; }
+
 /* Projects panel */
 .projects-panel {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   background: var(--panel);
+  min-width: 0;      /* allow collapse to 0 without overflow */
   min-height: 0;
+  overflow: hidden;  /* clip content while collapsing */
 }
 .projects-head {
   height: 40px;
@@ -161,13 +216,14 @@ body.resizing iframe { pointer-events: none; }
 .projects-list li.item .meta { color: var(--muted); font-size: 0.72rem; margin-top: 4px; }
 .projects-list li.empty { color: var(--muted); font-size: 0.82rem; padding: 10px; }
 
-/* Chat panel */
+/* Chat panel (middle, flexible filler) */
 .chat-panel {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   background: var(--panel);
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .messages {
@@ -192,16 +248,51 @@ body.resizing iframe { pointer-events: none; }
 .hint { color: var(--muted); font-size: 0.82rem; }
 
 .composer {
-  border-top: 1px solid var(--border);
+  --composer-h: 132px;
+  height: var(--composer-h);
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex-shrink: 0;
 }
+
+/* Mode banner: sits above the composer, shows new-vs-edit state */
+.mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+  flex-shrink: 0;
+}
+.mode-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.new-app {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.new-app:hover { background: var(--accent); color: #05283a; }
 
 textarea {
   width: 100%;
-  resize: vertical;
+  flex: 1;             /* fill the (resizable) composer height */
+  min-height: 0;
+  resize: none;        /* height is driven by the drag divider above */
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
@@ -221,11 +312,13 @@ button {
 }
 button:disabled { opacity: 0.5; cursor: default; }
 
-/* Preview panel */
+/* Preview panel (left) */
 .preview-panel {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .preview-toolbar {

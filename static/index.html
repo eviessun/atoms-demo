@@ -23,38 +23,7 @@
   </header>
 
   <main class="layout">
-    <!-- Left: chat / prompt panel -->
-    <section class="chat-panel">
-      <div class="messages" id="messages">
-        <div class="msg assistant">
-          <p data-i18n="app.intro">描述一个应用，我来帮你生成，并在右侧预览。</p>
-          <p class="hint" data-i18n="app.intro_hint">试试：“一个带开始/暂停的番茄钟和任务清单”。</p>
-        </div>
-      </div>
-      <form class="composer" id="composer">
-        <textarea id="prompt" rows="3" data-i18n-placeholder="app.prompt_ph" placeholder="描述你想要的应用…"></textarea>
-        <button type="submit" id="send" data-i18n="app.generate">生成</button>
-      </form>
-    </section>
-
-    <!-- Drag to resize the chat panel -->
-    <div class="resizer" data-target="chat" title="拖动调整宽度 / Drag to resize"></div>
-
-    <!-- Middle: saved projects -->
-    <aside class="projects-panel">
-      <div class="projects-head">
-        <span data-i18n="app.projects">我的项目</span>
-        <button id="refresh-projects" title="Refresh" class="icon-btn">⟳</button>
-      </div>
-      <ul class="projects-list" id="projects-list">
-        <li class="empty" id="projects-empty" data-i18n="app.projects_empty_guest">登录后即可保存并回看你的应用。</li>
-      </ul>
-    </aside>
-
-    <!-- Drag to resize the projects panel -->
-    <div class="resizer" data-target="projects" title="拖动调整宽度 / Drag to resize"></div>
-
-    <!-- Right: live preview -->
+    <!-- Left: live preview -->
     <section class="preview-panel">
       <div class="preview-toolbar">
         <span data-i18n="app.preview">实时预览</span>
@@ -70,6 +39,44 @@
                 sandbox="allow-scripts allow-forms allow-modals"></iframe>
       </div>
     </section>
+
+    <!-- Drag to resize the preview panel (collapsible to 0) -->
+    <div class="resizer" data-target="preview" title="拖动调整宽度 / Drag to resize"></div>
+
+    <!-- Middle: chat / prompt panel (flexible — absorbs resize) -->
+    <section class="chat-panel">
+      <div class="messages" id="messages">
+        <div class="msg assistant">
+          <p data-i18n="app.intro">描述一个应用，我来帮你生成，并在右侧预览。</p>
+          <p class="hint" data-i18n="app.intro_hint">试试：“一个带开始/暂停的番茄钟和任务清单”。</p>
+        </div>
+      </div>
+      <!-- Drag up/down to resize the input area -->
+      <div class="resizer-h" data-target="composer" title="拖动调整高度 / Drag to resize"></div>
+      <!-- Mode banner: shows whether we're building a new app or editing one -->
+      <div class="mode-bar" id="mode-bar">
+        <span class="mode-label" id="mode-label" data-i18n="app.mode_new">新建应用</span>
+        <button type="button" id="new-app" class="new-app hidden" data-i18n="app.new_app">＋ 新应用</button>
+      </div>
+      <form class="composer" id="composer">
+        <textarea id="prompt" rows="3" data-i18n-placeholder="app.prompt_ph" placeholder="描述你想要的应用…"></textarea>
+        <button type="submit" id="send" data-i18n="app.generate">生成</button>
+      </form>
+    </section>
+
+    <!-- Drag to resize the projects panel (collapsible to 0) -->
+    <div class="resizer" data-target="projects" title="拖动调整宽度 / Drag to resize"></div>
+
+    <!-- Right: saved projects -->
+    <aside class="projects-panel">
+      <div class="projects-head">
+        <span data-i18n="app.projects">我的项目</span>
+        <button id="refresh-projects" title="Refresh" class="icon-btn">⟳</button>
+      </div>
+      <ul class="projects-list" id="projects-list">
+        <li class="empty" id="projects-empty" data-i18n="app.projects_empty_guest">登录后即可保存并回看你的应用。</li>
+      </ul>
+    </aside>
   </main>
 
   <script src="/static/i18n.js"></script>

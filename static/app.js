@@ -14,11 +14,20 @@ const authBox = document.getElementById("auth-box");
 const projectsList = document.getElementById("projects-list");
 const refreshBtn = document.getElementById("refresh-projects");
 const langToggle = document.getElementById("lang-toggle");
+const modeLabel = document.getElementById("mode-label");
+const newAppBtn = document.getElementById("new-app");
 
 let currentUser = null;
 let lastProjects = [];       // cache so we can re-render on language change
 let statusKey = "status.idle";
 let lastProviderLabel = null;
+
+// Current app being worked on. When set, the composer iterates on it (edit mode)
+// instead of creating a new app. project_id is set for logged-in saved apps;
+// guests keep only the html so they can still iterate client-side.
+let currentProjectId = null;
+let currentHtml = null;
+let currentTitle = "";       // first prompt / project name, shown in the edit banner
 
 function addMessage(role, text) {
   const div = document.createElement("div");
@@ -40,6 +49,47 @@ function showPreview(html) {
   previewEl.srcdoc = html;
   previewPlaceholder.classList.add("hidden");
   previewEl.classList.remove("hidden");
+}
+
+// --- create / iterate mode ----------------------------------------------
+// Reflect whether we're building a new app or editing the current one. In edit
+// mode the banner names the app, a "＋ new app" button appears, and the
+// composer button/placeholder switch to the "update" wording.
+
+function renderMode() {
+  const editing = currentHtml != null;
+  if (editing) {
+    modeLabel.textContent = i18n.t("app.mode_edit", { name: currentTitle });
+    sendBtn.textContent = i18n.t("app.iterate");
+    promptEl.placeholder = i18n.t("app.prompt_ph_edit");
+    newAppBtn.classList.remove("hidden");
+  } else {
+    modeLabel.textContent = i18n.t("app.mode_new");
+    sendBtn.textContent = i18n.t("app.generate");
+    promptEl.placeholder = i18n.t("app.prompt_ph");
+    newAppBtn.classList.add("hidden");
+  }
+}
+
+// Enter edit mode for a given app (after generate / open).
+function enterEditMode({ projectId, html, title }) {
+  currentProjectId = projectId ?? null;
+  currentHtml = html;
+  if (title) currentTitle = title;
+  renderMode();
+}
+
+// Back to a clean slate to build a brand-new app.
+function startNewApp() {
+  currentProjectId = null;
+  currentHtml = null;
+  currentTitle = "";
+  previewEl.classList.add("hidden");
+  previewPlaceholder.classList.remove("hidden");
+  setStatus("status.idle");
+  renderMode();
+  addMessage("assistant", i18n.t("msg.new_app"));
+  promptEl.focus();
 }
 
 async function api(path, opts = {}) {
@@ -77,8 +127,12 @@ function renderAuth() {
 async function logout() {
   await api("/api/auth/logout", { method: "POST" });
   currentUser = null;
+  // The saved project_id is no longer usable once logged out, but keep the
+  // current html so the user can still iterate as a guest (client-side base).
+  currentProjectId = null;
   renderAuth();
   renderProjects([]);
+  renderMode();
 }
 
 async function loadMe() {
@@ -132,6 +186,7 @@ async function openProject(id) {
   if (!ok) { addMessage("assistant", i18n.t("msg.open_fail", { id })); return; }
   showPreview(data.html);
   setStatus("status.ready");
+  enterEditMode({ projectId: id, html: data.html, title: data.prompt });
   addMessage("assistant", i18n.t("msg.loaded", { id, prompt: data.prompt }));
 }
 
@@ -148,19 +203,38 @@ function updateProviderBadge() {
 }
 
 async function generate(prompt) {
+  const editing = currentHtml != null;
   sendBtn.disabled = true;
   setStatus("status.generating");
-  addMessage("assistant", i18n.t("msg.generating"));
+  addMessage("assistant", i18n.t(editing ? "msg.editing" : "msg.generating"));
   try {
+    const body = { prompt };
+    if (editing) {
+      // Logged-in saved app -> iterate by project_id (server holds the base).
+      // Guest -> send the current html so it can still be edited client-side.
+      if (currentProjectId != null) body.project_id = currentProjectId;
+      else body.base_html = currentHtml;
+    }
     const { ok, status, data } = await api("/api/generate", {
       method: "POST",
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(body),
     });
     if (!ok) throw new Error(data.error || `HTTP ${status}`);
     showPreview(data.html);
     setStatus("status.ready");
-    const saved = data.project_id ? i18n.t("msg.saved_suffix", { id: data.project_id }) : "";
-    addMessage("assistant", i18n.t("msg.done", { provider: data.provider, saved }));
+
+    // Remember the produced app so the next message keeps iterating on it.
+    if (!editing) currentTitle = prompt;
+    enterEditMode({ projectId: data.project_id, html: data.html, title: currentTitle });
+
+    const didEdit = editing || data.iterated;
+    let saved = "";
+    if (data.project_id) {
+      saved = i18n.t(didEdit ? "msg.updated_suffix" : "msg.saved_suffix", { id: data.project_id });
+    }
+    addMessage("assistant", i18n.t(didEdit ? "msg.done_edit" : "msg.done", {
+      provider: data.provider, saved,
+    }));
     if (data.project_id) loadProjects();
   } catch (err) {
     setStatus("status.error");
@@ -181,74 +255,125 @@ composer.addEventListener("submit", (e) => {
 
 refreshBtn.addEventListener("click", loadProjects);
 langToggle.addEventListener("click", () => i18n.toggle());
+newAppBtn.addEventListener("click", startNewApp);
 
 // --- resizable panels ----------------------------------------------------
-// Drag the dividers to resize the chat / projects columns. The preview column
-// takes the remaining space (grid `1fr`). Widths persist across reloads.
+// Layout order: preview | resizer | chat(flex) | resizer | projects.
+// The chat column is the flexible `1fr` filler that absorbs all resize deltas,
+// so dragging can never dead-lock. The two SIDE columns (preview, projects) are
+// px-sized and may be dragged all the way to 0 (fully hidden), then dragged back
+// out again — like Trae/VS Code side panels.
+//
+// setPointerCapture keeps pointermove/pointerup on the divider even if the
+// cursor moves fast or leaves it, so the final size always gets saved.
 
 (function initResizers() {
   const layout = document.querySelector(".layout");
   if (!layout) return;
 
-  const VARS = { chat: "--chat-w", projects: "--projects-w" };
-  const MIN = { chat: 260, projects: 160 }; // px floor per panel
   const STORE_KEY = "atoms:panelWidths";
+  // For each side divider: which CSS var it drives, and the sign that maps a
+  // rightward drag (+dx) onto a width change. The projects column sits on the
+  // right edge, so dragging its divider right SHRINKS it (sign -1).
+  const SIDE = {
+    preview:  { cssVar: "--preview-w",  sign: +1 },
+    projects: { cssVar: "--projects-w", sign: -1 },
+  };
+  const CHAT_MIN = 280;       // must match the grid's minmax() floor
+  const COMPOSER_VAR = "--composer-h";
+  const COMPOSER_MIN = 96;    // keep textarea + button usable
+  const MESSAGES_MIN = 120;   // messages list must keep at least this above input
 
-  // Restore saved widths.
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    for (const [target, cssVar] of Object.entries(VARS)) {
-      if (typeof saved[target] === "number") {
-        layout.style.setProperty(cssVar, `${saved[target]}px`);
-      }
+  function loadStore() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); }
+    catch { return {}; }
+  }
+  function saveStore(patch) {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ ...loadStore(), ...patch }));
+    } catch { /* quota / private mode */ }
+  }
+
+  // Restore saved sizes.
+  const saved = loadStore();
+  for (const [target, { cssVar }] of Object.entries(SIDE)) {
+    if (typeof saved[target] === "number") {
+      layout.style.setProperty(cssVar, `${saved[target]}px`);
     }
-  } catch { /* ignore malformed storage */ }
-
-  function persist() {
-    const out = {};
-    for (const [target, cssVar] of Object.entries(VARS)) {
-      const v = parseInt(getComputedStyle(layout).getPropertyValue(cssVar), 10);
-      if (!Number.isNaN(v)) out[target] = v;
-    }
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(out)); } catch { /* quota */ }
+  }
+  const composer = document.querySelector(".composer");
+  if (composer && typeof saved.composer === "number") {
+    composer.style.setProperty(COMPOSER_VAR, `${saved.composer}px`);
   }
 
-  let active = null; // { target, cssVar, startX, startW, maxW }
+  const px = (el, cssVar) =>
+    parseInt(getComputedStyle(el).getPropertyValue(cssVar), 10) || 0;
 
-  function onMove(e) {
-    if (!active) return;
-    const dx = e.clientX - active.startX;
-    let w = active.startW + dx;
-    w = Math.max(MIN[active.target], Math.min(w, active.maxW));
-    layout.style.setProperty(active.cssVar, `${w}px`);
-  }
-
-  function onUp() {
-    if (!active) return;
-    active.el.classList.remove("dragging");
-    document.body.classList.remove("resizing");
-    active = null;
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    persist();
-  }
-
+  // --- side dividers (collapsible column widths) ------------------------
   for (const el of document.querySelectorAll(".resizer")) {
+    const target = el.dataset.target;
+    const cfg = SIDE[target];
+    if (!cfg) continue;
+    const { cssVar, sign } = cfg;
+
     el.addEventListener("pointerdown", (e) => {
-      const target = el.dataset.target;
-      const cssVar = VARS[target];
-      if (!cssVar) return;
       e.preventDefault();
-      const startW = parseInt(getComputedStyle(layout).getPropertyValue(cssVar), 10) || 0;
-      // The dragged panel may grow only until the preview column hits its 320px
-      // floor, so it can gain at most (currentPreviewWidth - 320) pixels.
-      const previewW = document.querySelector(".preview-panel").clientWidth;
-      const maxW = startW + Math.max(0, previewW - 320);
-      active = { target, cssVar, el, startX: e.clientX, startW, maxW };
+      try { el.setPointerCapture(e.pointerId); } catch { /* capture optional */ }
+      const startX = e.clientX;
+      const startW = px(layout, cssVar);
+      // This column may grow until the flexible chat column hits CHAT_MIN.
+      const chatW = document.querySelector(".chat-panel").clientWidth;
+      const maxW = startW + Math.max(0, chatW - CHAT_MIN);
+
       el.classList.add("dragging");
       document.body.classList.add("resizing");
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
+
+      const onMove = (ev) => {
+        // Collapsible to 0, capped so the flexible middle keeps its minimum.
+        const delta = sign * (ev.clientX - startX);
+        const w = Math.max(0, Math.min(startW + delta, maxW));
+        layout.style.setProperty(cssVar, `${w}px`);
+      };
+      const onUp = () => {
+        el.classList.remove("dragging");
+        document.body.classList.remove("resizing");
+        el.removeEventListener("pointermove", onMove);
+        el.removeEventListener("pointerup", onUp);
+        saveStore({ [target]: px(layout, cssVar) });
+      };
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerup", onUp);
+    });
+  }
+
+  // --- vertical divider (input area height) -----------------------------
+  const hResizer = document.querySelector('.resizer-h[data-target="composer"]');
+  if (hResizer && composer) {
+    hResizer.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      try { hResizer.setPointerCapture(e.pointerId); } catch { /* capture optional */ }
+      const startY = e.clientY;
+      const startH = composer.clientHeight;
+      const messagesH = document.getElementById("messages").clientHeight;
+      const maxH = startH + Math.max(0, messagesH - MESSAGES_MIN);
+
+      hResizer.classList.add("dragging");
+      document.body.classList.add("resizing-v");
+
+      const onMove = (ev) => {
+        // Drag up => taller input, so subtract the downward delta.
+        const h = Math.max(COMPOSER_MIN, Math.min(startH - (ev.clientY - startY), maxH));
+        composer.style.setProperty(COMPOSER_VAR, `${h}px`);
+      };
+      const onUp = () => {
+        hResizer.classList.remove("dragging");
+        document.body.classList.remove("resizing-v");
+        hResizer.removeEventListener("pointermove", onMove);
+        hResizer.removeEventListener("pointerup", onUp);
+        saveStore({ composer: composer.clientHeight });
+      };
+      hResizer.addEventListener("pointermove", onMove);
+      hResizer.addEventListener("pointerup", onUp);
     });
   }
 })();
@@ -258,11 +383,13 @@ window.addEventListener("langchange", () => {
   renderAuth();
   renderProjects(lastProjects);
   updateProviderBadge();
+  renderMode();
   statusEl.textContent = i18n.t(statusKey);
 });
 
 // init
 (async function init() {
+  renderMode();
   await loadHealth();
   await loadMe();
   await loadProjects();
