@@ -711,6 +711,8 @@ iframe {
   cursor: pointer;
 }
 .code-copy:hover { color: #fff; border-color: rgba(255, 255, 255, 0.35); }
+/* Copy / download / open-in-new-tab sit together on the right of the head. */
+.code-actions { display: flex; gap: 6px; }
 .code-view-body {
   flex: 1;
   margin: 0;

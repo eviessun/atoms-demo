@@ -167,6 +167,9 @@ DeepSeek、豆包、Kimi、OpenRouter、OpenAI 都复用同一个 OpenAI 兼容�
 | POST | `/api/generate` | 生成新应用，或在已有应用上迭代（`project_id` / `base_html`） |
 | GET | `/api/projects` | 当前用户保存的应用 |
 | GET | `/api/projects/{id}` | 单个应用（限本人） |
+| GET | `/api/projects/{id}/versions` | 某项目的版本快照（最新在前，限本人） |
+| GET | `/api/projects/{id}/versions/{vid}` | 单个快照的完整 HTML（用于预览） |
+| POST | `/api/projects/{id}/versions/{vid}/restore` | 回滚到某快照（非破坏性——回滚也追加为新版本） |
 | GET | `/` , `/login` | 前端页面 |
 
 请求/响应结构和设计取舍详见 [DESIGN.md](./DESIGN.md)。
@@ -181,8 +184,9 @@ DeepSeek、豆包、Kimi、OpenRouter、OpenAI 都复用同一个 OpenAI 兼容�
 - [x] 双数据库后端 —— 线上 Neon Postgres，本地 SQLite
 - [x] 迭代回路 —— 通过后续对话细化已生成应用（Agent 行为）
 - [x] 多模型下拉（密钥安全）、免费模型口子 + 优雅回退
-- [ ] 流式生成
-- [ ] 每个项目的版本历史
+- [x] 流式生成（SSE —— 实时展示推理过程与代码逐字写出）
+- [x] 每个项目的版本历史 + 非破坏性回滚
+- [x] 导出生成的应用 —— 下载 `index.html`、复制源码、新标签页打开运行
 
 ## 安全说明
 

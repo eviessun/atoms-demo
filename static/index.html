@@ -121,8 +121,14 @@
         <div class="code-view hidden" id="code-view">
           <div class="code-view-head">
             <span class="code-view-file">index.html</span>
-            <button type="button" class="code-copy" id="code-copy"
-                    data-i18n-tooltip="app.copy" title="复制 / Copy">⧉</button>
+            <div class="code-actions">
+              <button type="button" class="code-copy" id="code-copy"
+                      data-i18n-tooltip="app.copy" title="复制 / Copy">⧉</button>
+              <button type="button" class="code-copy" id="code-download"
+                      data-i18n-tooltip="app.download" title="下载 index.html">⬇</button>
+              <button type="button" class="code-copy" id="code-open"
+                      data-i18n-tooltip="app.open_tab" title="在新标签页打开">↗</button>
+            </div>
           </div>
           <pre class="code-view-body"><code id="code-content"></code></pre>
         </div>

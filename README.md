@@ -175,6 +175,9 @@ This repo ships `render.yaml`, so it deploys as a web service on the free tier.
 | POST | `/api/generate` | build a new app, or iterate on one (`project_id` / `base_html`) |
 | GET | `/api/projects` | current user's saved apps |
 | GET | `/api/projects/{id}` | one saved app (owner-scoped) |
+| GET | `/api/projects/{id}/versions` | a project's version snapshots (newest first, owner-scoped) |
+| GET | `/api/projects/{id}/versions/{vid}` | one snapshot's full HTML (for preview) |
+| POST | `/api/projects/{id}/versions/{vid}/restore` | roll back to a snapshot (non-destructive — appended as a new version) |
 | GET | `/` , `/login` | frontend pages |
 
 See [DESIGN.md](./DESIGN.md) for request/response shapes and design rationale.
@@ -189,8 +192,9 @@ See [DESIGN.md](./DESIGN.md) for request/response shapes and design rationale.
 - [x] Dual DB backend — Neon Postgres in prod, SQLite locally
 - [x] Iterate loop — refine a generated app via follow-up messages (agent behavior)
 - [x] Multi-model dropdown (key-safe), free-model seam + graceful fallback
-- [ ] Streaming generation
-- [ ] Version history per project
+- [x] Streaming generation (SSE — live reasoning + code as it's written)
+- [x] Version history per project + non-destructive rollback
+- [x] Export the generated app — download `index.html`, copy source, open in a new tab
 
 ## Security notes
 

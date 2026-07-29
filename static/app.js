@@ -28,6 +28,8 @@ const tabCode = document.getElementById("tab-code");
 const codeView = document.getElementById("code-view");
 const codeContent = document.getElementById("code-content");
 const codeCopy = document.getElementById("code-copy");
+const codeDownload = document.getElementById("code-download");
+const codeOpen = document.getElementById("code-open");
 const codeScroller = codeContent.parentElement;   // the scrollable <pre>
 // File strip above the composer
 const fileStrip = document.getElementById("file-strip");
@@ -59,6 +61,12 @@ const BYOK_STORE_KEY = "atoms:byok";   // {key,model,base_url,transport,provider
 let currentProjectId = null;
 let currentHtml = null;
 let currentTitle = "";       // first prompt / project name, shown in the edit banner
+
+// Guards against overlapping generations. A second submit while one is still
+// running would race: the first hasn't returned its project_id yet, so the
+// second also runs as "create" and forks a duplicate project. This flag is set
+// synchronously on submit (before any await), so re-entrant submits are dropped.
+let generating = false;
 
 function addMessage(role, text) {
   const div = document.createElement("div");
@@ -726,13 +734,23 @@ async function generateStream(prompt) {
   sendBtn.disabled = false;
 }
 
-composer.addEventListener("submit", (e) => {
+composer.addEventListener("submit", async (e) => {
   e.preventDefault();
+  // Ignore re-entrant submits while a generation is in flight. Set the flag
+  // synchronously here (before any await) so a fast second click can't race the
+  // first into creating a duplicate project. It's cleared in finally once the
+  // whole run settles — including the streaming path's fallback to generate().
+  if (generating) return;
   const prompt = promptEl.value.trim();
   if (!prompt) return;
+  generating = true;
   addMessage("user", prompt);
   promptEl.value = "";
-  generateStream(prompt);
+  try {
+    await generateStream(prompt);
+  } finally {
+    generating = false;
+  }
 });
 
 refreshBtn.addEventListener("click", loadProjects);
@@ -752,6 +770,45 @@ codeCopy.addEventListener("click", async () => {
     codeCopy.textContent = "✓";
     setTimeout(() => { codeCopy.textContent = prev; }, 1200);
   } catch { /* clipboard blocked; no-op */ }
+});
+
+// --- export the generated app -------------------------------------------
+// The app is a single self-contained index.html, so "export" is just handing
+// the current HTML to the user: download it as a file, or open it in a new tab
+// to run it standalone (outside our sandboxed preview iframe).
+
+// Turn the project title into a safe-ish file slug, defaulting to "app".
+function appFilename() {
+  const base = (currentTitle || "app")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")   // non-alnum -> dashes
+    .replace(/^-+|-+$/g, "")       // trim leading/trailing dashes
+    .slice(0, 40);
+  return `${base || "app"}.html`;
+}
+
+codeDownload.addEventListener("click", () => {
+  if (!currentHtml) return;
+  const blob = new Blob([currentHtml], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = appFilename();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  addMessage("assistant", i18n.t("msg.downloaded"));
+});
+
+codeOpen.addEventListener("click", () => {
+  if (!currentHtml) return;
+  // Blob URL (not srcdoc) so the new tab runs the app at its own origin.
+  const blob = new Blob([currentHtml], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener");
+  // Give the new tab time to load before releasing the object URL.
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 });
 
 // --- resizable panels ----------------------------------------------------

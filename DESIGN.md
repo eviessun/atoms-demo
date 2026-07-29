@@ -281,16 +281,22 @@ generation failed).
 ## 8. 已知取舍与后续 / Known trade-offs & next
 
 **中文**
-- 目前保存的是每个项目的**最新版**，未做版本历史（可加 `project_versions` 表）。
-- 生成是**非流式**（一次性返回整份 HTML）；接真实模型后可加 SSE 流式输出提升体感。
+- 版本历史用 append-only 的 `project_versions` 表：每次生成/迭代/回滚都追加一条快照，
+  `projects.html` 始终指向“当前”版本；回滚是**非破坏性**的（回滚本身也记为新版本，历史永不截断）。
+- 生成走 **SSE 流式**（实时展示推理过程与代码逐字写出）；mock / 非流式传输则用分块模拟动画。
+- 生成的应用可**导出**：下载单文件 `index.html`、复制源码、或在新标签页真机运行（脱离沙箱 iframe）。
 - 线上默认仍是 `mock`，接真实免费模型只需在 Render 配一个 key + `DEFAULT_MODEL_ID`，无需改码。
 - 免费档休眠 + 冷启动是平台限制，靠保活 ping 缓解。
 
 **English**
-- We store the **latest** version per project; no version history yet (could add a
-  `project_versions` table).
-- Generation is **non-streaming** (one full HTML response); with a real model, SSE
-  streaming would improve perceived latency.
+- Version history uses an append-only `project_versions` table: every generate/iterate/
+  restore appends a snapshot, while `projects.html` always points at the "current" one.
+  Rollback is **non-destructive** (the restore is itself recorded as a new version, so
+  history is never truncated).
+- Generation is **SSE-streamed** (live reasoning + code as it's written); mock and
+  non-streaming transports fall back to a chunked simulated animation.
+- The generated app can be **exported**: download the single `index.html`, copy the
+  source, or open it in a new tab to run it standalone (outside the sandboxed iframe).
 - Prod still defaults to `mock`; switching to a real free model is just a Render env
   var (`OPENROUTER_API_KEY` + `DEFAULT_MODEL_ID`) — no code change.
 - Free-tier sleep + cold start is a platform limit, mitigated by the keep-alive ping.
