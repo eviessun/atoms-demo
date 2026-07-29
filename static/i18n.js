@@ -63,7 +63,8 @@
       "msg.loaded": "已加载保存的应用 #{id}：“{prompt}”。",
       "msg.open_fail": "无法打开项目 #{id}。",
       "msg.error": "出错：{msg}",
-      "lang.toggle": "EN",
+      "lang.toggle": "🌐 中",
+      "lang.switch_tooltip": "切换语言 / Switch language",
     },
     en: {
       "doc.login_title": "Sign in · Atoms Demo",
@@ -118,7 +119,8 @@
       "msg.loaded": "Loaded saved app #{id}: “{prompt}”.",
       "msg.open_fail": "Couldn't open project #{id}.",
       "msg.error": "Error: {msg}",
-      "lang.toggle": "中",
+      "lang.toggle": "🌐 EN",
+      "lang.switch_tooltip": "Switch language / 切换语言",
     },
   };
 
@@ -149,6 +151,9 @@
     });
     document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
       el.placeholder = t(el.getAttribute("data-i18n-placeholder"));
+    });
+    document.querySelectorAll("[data-i18n-tooltip]").forEach((el) => {
+      el.title = t(el.getAttribute("data-i18n-tooltip"));
     });
     document.querySelectorAll("[data-i18n-title]").forEach((el) => {
       const key = el.getAttribute("data-i18n-title");
