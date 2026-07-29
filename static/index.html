@@ -12,7 +12,12 @@
       <span class="logo">⚛</span>
       <span>Atoms Demo</span>
     </div>
-    <div class="badge" id="provider-badge">provider: …</div>
+    <div class="topbar-right">
+      <div class="badge" id="provider-badge">provider: …</div>
+      <div class="auth-box" id="auth-box">
+        <!-- filled by JS: either login form or user + logout -->
+      </div>
+    </div>
   </header>
 
   <main class="layout">
@@ -29,6 +34,17 @@
         <button type="submit" id="send">Generate</button>
       </form>
     </section>
+
+    <!-- Middle: saved projects -->
+    <aside class="projects-panel">
+      <div class="projects-head">
+        <span>My projects</span>
+        <button id="refresh-projects" title="Refresh" class="icon-btn">⟳</button>
+      </div>
+      <ul class="projects-list" id="projects-list">
+        <li class="empty" id="projects-empty">Log in to save &amp; revisit your apps.</li>
+      </ul>
+    </aside>
 
     <!-- Right: live preview -->
     <section class="preview-panel">

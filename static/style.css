@@ -39,11 +39,91 @@ html, body {
   padding: 4px 10px;
 }
 
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+
+/* Auth box in the topbar */
+.auth-box { display: flex; align-items: center; gap: 8px; }
+.auth-box input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  width: 140px;
+}
+.auth-box button {
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  border-radius: 8px;
+}
+.auth-box .who { color: var(--muted); font-size: 0.82rem; }
+.auth-box .ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.auth-error { color: #f87171; font-size: 0.78rem; }
+
 .layout {
   display: grid;
-  grid-template-columns: 380px 1fr;
+  grid-template-columns: 360px 240px 1fr;
   height: calc(100% - 56px);
 }
+
+/* Projects panel */
+.projects-panel {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  min-height: 0;
+}
+.projects-head {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.icon-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px 8px;
+  font-size: 0.9rem;
+}
+.projects-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.projects-list li.item {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--panel-2);
+}
+.projects-list li.item:hover { border-color: var(--accent); }
+.projects-list li.item .title {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projects-list li.item .meta { color: var(--muted); font-size: 0.72rem; margin-top: 4px; }
+.projects-list li.empty { color: var(--muted); font-size: 0.82rem; padding: 10px; }
 
 /* Chat panel */
 .chat-panel {
