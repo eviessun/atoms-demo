@@ -41,30 +41,41 @@ html, body {
 
 .topbar-right { display: flex; align-items: center; gap: 12px; }
 
+.lang-toggle {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lang-toggle:hover { border-color: var(--accent); color: var(--accent); }
+
 /* Auth box in the topbar */
 .auth-box { display: flex; align-items: center; gap: 8px; }
-.auth-box input {
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font: inherit;
-  font-size: 0.82rem;
-  width: 140px;
-}
-.auth-box button {
-  padding: 6px 12px;
-  font-size: 0.82rem;
-  border-radius: 8px;
-}
 .auth-box .who { color: var(--muted); font-size: 0.82rem; }
 .auth-box .ghost {
   background: transparent;
   color: var(--muted);
   border: 1px solid var(--border);
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  border-radius: 8px;
 }
-.auth-error { color: #f87171; font-size: 0.78rem; }
+.auth-box .ghost:hover { border-color: var(--accent); color: var(--accent); }
+.auth-box .login-entry {
+  background: var(--accent);
+  color: #05283a;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.82rem;
+  padding: 7px 14px;
+  border-radius: 8px;
+}
+.auth-box .login-entry:hover { opacity: 0.92; }
 
 .layout {
   display: grid;

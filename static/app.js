@@ -13,8 +13,12 @@ const providerBadge = document.getElementById("provider-badge");
 const authBox = document.getElementById("auth-box");
 const projectsList = document.getElementById("projects-list");
 const refreshBtn = document.getElementById("refresh-projects");
+const langToggle = document.getElementById("lang-toggle");
 
 let currentUser = null;
+let lastProjects = [];       // cache so we can re-render on language change
+let statusKey = "status.idle";
+let lastProviderLabel = null;
 
 function addMessage(role, text) {
   const div = document.createElement("div");
@@ -26,8 +30,9 @@ function addMessage(role, text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function setStatus(s) {
-  statusEl.textContent = s;
+function setStatus(key) {
+  statusKey = key;
+  statusEl.textContent = i18n.t(key);
 }
 
 // Swap the dark placeholder for the (white) iframe once we have content to show.
@@ -57,39 +62,16 @@ function renderAuth() {
     who.textContent = currentUser.email;
     const out = document.createElement("button");
     out.className = "ghost";
-    out.textContent = "Log out";
+    out.textContent = i18n.t("app.logout");
     out.onclick = logout;
     authBox.append(who, out);
   } else {
-    const email = document.createElement("input");
-    email.type = "email"; email.placeholder = "email"; email.id = "auth-email";
-    const pw = document.createElement("input");
-    pw.type = "password"; pw.placeholder = "password"; pw.id = "auth-pw";
-    const login = document.createElement("button");
-    login.textContent = "Log in"; login.onclick = () => submitAuth("login");
-    const reg = document.createElement("button");
-    reg.className = "ghost"; reg.textContent = "Register";
-    reg.onclick = () => submitAuth("register");
-    authBox.append(email, pw, login, reg);
+    const link = document.createElement("a");
+    link.className = "login-entry";
+    link.href = "/login";
+    link.textContent = i18n.t("app.login_entry");
+    authBox.append(link);
   }
-}
-
-async function submitAuth(kind) {
-  const email = document.getElementById("auth-email").value.trim();
-  const password = document.getElementById("auth-pw").value;
-  if (!email || !password) return;
-  const { ok, data } = await api(`/api/auth/${kind}`, {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-  if (!ok) {
-    addMessage("assistant", `Auth error: ${data.error || "failed"}`);
-    return;
-  }
-  currentUser = { id: data.id, email: data.email };
-  renderAuth();
-  addMessage("assistant", `Signed in as ${data.email}. Your generations will be saved.`);
-  loadProjects();
 }
 
 async function logout() {
@@ -108,22 +90,23 @@ async function loadMe() {
 // --- projects ------------------------------------------------------------
 
 function renderProjects(items) {
+  lastProjects = items || [];
   projectsList.innerHTML = "";
   if (!currentUser) {
     const li = document.createElement("li");
     li.className = "empty";
-    li.textContent = "Log in to save & revisit your apps.";
+    li.textContent = i18n.t("app.projects_empty_guest");
     projectsList.appendChild(li);
     return;
   }
-  if (!items.length) {
+  if (!lastProjects.length) {
     const li = document.createElement("li");
     li.className = "empty";
-    li.textContent = "No apps yet — generate one!";
+    li.textContent = i18n.t("app.projects_empty_none");
     projectsList.appendChild(li);
     return;
   }
-  for (const p of items) {
+  for (const p of lastProjects) {
     const li = document.createElement("li");
     li.className = "item";
     const title = document.createElement("div");
@@ -146,23 +129,28 @@ async function loadProjects() {
 
 async function openProject(id) {
   const { ok, data } = await api(`/api/projects/${id}`);
-  if (!ok) { addMessage("assistant", `Couldn't open project #${id}.`); return; }
+  if (!ok) { addMessage("assistant", i18n.t("msg.open_fail", { id })); return; }
   showPreview(data.html);
-  setStatus("ready");
-  addMessage("assistant", `Loaded saved app #${id}: “${data.prompt}”.`);
+  setStatus("status.ready");
+  addMessage("assistant", i18n.t("msg.loaded", { id, prompt: data.prompt }));
 }
 
 // --- generate ------------------------------------------------------------
 
 async function loadHealth() {
   const { ok, data } = await api("/api/health");
-  providerBadge.textContent = ok ? `provider: ${data.llm_provider}` : "provider: ?";
+  lastProviderLabel = ok ? data.llm_provider : "?";
+  updateProviderBadge();
+}
+
+function updateProviderBadge() {
+  providerBadge.textContent = `${i18n.t("app.provider")}: ${lastProviderLabel ?? "?"}`;
 }
 
 async function generate(prompt) {
   sendBtn.disabled = true;
-  setStatus("generating");
-  addMessage("assistant", "Generating your app…");
+  setStatus("status.generating");
+  addMessage("assistant", i18n.t("msg.generating"));
   try {
     const { ok, status, data } = await api("/api/generate", {
       method: "POST",
@@ -170,13 +158,13 @@ async function generate(prompt) {
     });
     if (!ok) throw new Error(data.error || `HTTP ${status}`);
     showPreview(data.html);
-    setStatus("ready");
-    const saved = data.project_id ? ` (saved as #${data.project_id})` : "";
-    addMessage("assistant", `Done — rendered on the right (via ${data.provider})${saved}.`);
+    setStatus("status.ready");
+    const saved = data.project_id ? i18n.t("msg.saved_suffix", { id: data.project_id }) : "";
+    addMessage("assistant", i18n.t("msg.done", { provider: data.provider, saved }));
     if (data.project_id) loadProjects();
   } catch (err) {
-    setStatus("error");
-    addMessage("assistant", `Error: ${err.message}`);
+    setStatus("status.error");
+    addMessage("assistant", i18n.t("msg.error", { msg: err.message }));
   } finally {
     sendBtn.disabled = false;
   }
@@ -192,6 +180,15 @@ composer.addEventListener("submit", (e) => {
 });
 
 refreshBtn.addEventListener("click", loadProjects);
+langToggle.addEventListener("click", () => i18n.toggle());
+
+// When language changes, re-render everything that was built dynamically.
+window.addEventListener("langchange", () => {
+  renderAuth();
+  renderProjects(lastProjects);
+  updateProviderBadge();
+  statusEl.textContent = i18n.t(statusKey);
+});
 
 // init
 (async function init() {

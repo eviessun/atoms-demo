@@ -154,4 +154,9 @@ def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/login")
+def login_page():
+    return FileResponse(STATIC_DIR / "login.html")
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

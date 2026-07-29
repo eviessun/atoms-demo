@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -10,12 +10,13 @@
   <header class="topbar">
     <div class="brand">
       <span class="logo">⚛</span>
-      <span>Atoms Demo</span>
+      <span data-i18n="brand">Atoms Demo</span>
     </div>
     <div class="topbar-right">
       <div class="badge" id="provider-badge">provider: …</div>
+      <button class="lang-toggle" id="lang-toggle" data-i18n="lang.toggle">EN</button>
       <div class="auth-box" id="auth-box">
-        <!-- filled by JS: either login form or user + logout -->
+        <!-- filled by JS: either a "登录/注册" link or user + logout -->
       </div>
     </div>
   </header>
@@ -25,38 +26,38 @@
     <section class="chat-panel">
       <div class="messages" id="messages">
         <div class="msg assistant">
-          <p>Describe an app and I'll build it, then preview it on the right.</p>
-          <p class="hint">Try: “a pomodoro timer with start/pause and a task list”.</p>
+          <p data-i18n="app.intro">描述一个应用，我来帮你生成，并在右侧预览。</p>
+          <p class="hint" data-i18n="app.intro_hint">试试：“一个带开始/暂停的番茄钟和任务清单”。</p>
         </div>
       </div>
       <form class="composer" id="composer">
-        <textarea id="prompt" rows="3" placeholder="Describe the app you want…"></textarea>
-        <button type="submit" id="send">Generate</button>
+        <textarea id="prompt" rows="3" data-i18n-placeholder="app.prompt_ph" placeholder="描述你想要的应用…"></textarea>
+        <button type="submit" id="send" data-i18n="app.generate">生成</button>
       </form>
     </section>
 
     <!-- Middle: saved projects -->
     <aside class="projects-panel">
       <div class="projects-head">
-        <span>My projects</span>
+        <span data-i18n="app.projects">我的项目</span>
         <button id="refresh-projects" title="Refresh" class="icon-btn">⟳</button>
       </div>
       <ul class="projects-list" id="projects-list">
-        <li class="empty" id="projects-empty">Log in to save &amp; revisit your apps.</li>
+        <li class="empty" id="projects-empty" data-i18n="app.projects_empty_guest">登录后即可保存并回看你的应用。</li>
       </ul>
     </aside>
 
     <!-- Right: live preview -->
     <section class="preview-panel">
       <div class="preview-toolbar">
-        <span>Live preview</span>
-        <span class="status" id="status">idle</span>
+        <span data-i18n="app.preview">实时预览</span>
+        <span class="status" id="status" data-i18n="status.idle">空闲</span>
       </div>
       <div class="preview-body">
         <div class="preview-placeholder" id="preview-placeholder">
           <div class="ph-icon">🖼️</div>
-          <p class="ph-title">Your app preview appears here</p>
-          <p class="ph-hint">Describe an app on the left and hit <strong>Generate</strong>.</p>
+          <p class="ph-title" data-i18n="app.preview_ph_title">应用预览会显示在这里</p>
+          <p class="ph-hint" data-i18n="app.preview_ph_hint">在左侧描述一个应用，然后点击“生成”。</p>
         </div>
         <iframe id="preview" title="preview" class="hidden"
                 sandbox="allow-scripts allow-forms allow-modals"></iframe>
@@ -64,6 +65,7 @@
     </section>
   </main>
 
+  <script src="/static/i18n.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

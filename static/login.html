@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-i18n-title="doc.login_title">登录 · Atoms Demo</title>
+  <link rel="stylesheet" href="/static/login.css" />
+</head>
+<body>
+  <button class="lang-toggle" id="lang-toggle" data-i18n="lang.toggle">EN</button>
+
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="logo">⚛</span>
+        <span class="brand-name" data-i18n="brand">Atoms Demo</span>
+      </div>
+      <p class="auth-sub" id="auth-sub" data-i18n="login.sub.login">欢迎回来，请登录你的账户</p>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" id="tab-login" role="tab" data-i18n="login.tab.login">登录</button>
+        <button class="tab" id="tab-register" role="tab" data-i18n="login.tab.register">注册</button>
+      </div>
+
+      <form id="auth-form" novalidate>
+        <label class="field">
+          <span class="field-label" data-i18n="login.label.email">邮箱</span>
+          <input type="email" id="email" autocomplete="email"
+                 placeholder="you@example.com" required />
+        </label>
+
+        <label class="field">
+          <span class="field-label" data-i18n="login.label.password">密码</span>
+          <span class="pw-wrap">
+            <input type="password" id="password" autocomplete="current-password"
+                   data-i18n-placeholder="login.ph.password.login" placeholder="请输入密码" required />
+            <button type="button" class="pw-toggle" id="pw-toggle" aria-label="显示密码">👁</button>
+          </span>
+        </label>
+
+        <p class="form-error" id="form-error" hidden></p>
+
+        <button type="submit" class="submit-btn" id="submit-btn" data-i18n="login.submit.login">登录</button>
+      </form>
+
+      <div class="auth-foot">
+        <a href="/" class="ghost-link" data-i18n="login.back">← 返回首页，先随便体验一下</a>
+      </div>
+    </div>
+    <p class="auth-note" data-i18n="app.tagline">用 AI 把想法变成可运行的网页应用</p>
+  </div>
+
+  <script src="/static/i18n.js"></script>
+  <script src="/static/login.js"></script>
+</body>
+</html>
