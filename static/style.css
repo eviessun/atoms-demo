@@ -78,10 +78,35 @@ html, body {
 .auth-box .login-entry:hover { opacity: 0.92; }
 
 .layout {
+  --chat-w: 360px;
+  --projects-w: 240px;
+  --resizer-w: 6px;
   display: grid;
-  grid-template-columns: 360px 240px 1fr;
+  grid-template-columns:
+    var(--chat-w) var(--resizer-w) var(--projects-w) var(--resizer-w) 1fr;
   height: calc(100% - 56px);
 }
+
+/* Draggable dividers between panels */
+.resizer {
+  background: var(--border);
+  cursor: col-resize;
+  position: relative;
+  z-index: 5;
+  transition: background 0.15s;
+}
+.resizer::after {
+  /* a wider invisible hit area so it's easy to grab */
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+.resizer:hover,
+.resizer.dragging { background: var(--accent); }
+
+/* While dragging: kill text selection and iframe pointer capture globally */
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing iframe { pointer-events: none; }
 
 /* Projects panel */
 .projects-panel {

@@ -182,6 +182,77 @@ composer.addEventListener("submit", (e) => {
 refreshBtn.addEventListener("click", loadProjects);
 langToggle.addEventListener("click", () => i18n.toggle());
 
+// --- resizable panels ----------------------------------------------------
+// Drag the dividers to resize the chat / projects columns. The preview column
+// takes the remaining space (grid `1fr`). Widths persist across reloads.
+
+(function initResizers() {
+  const layout = document.querySelector(".layout");
+  if (!layout) return;
+
+  const VARS = { chat: "--chat-w", projects: "--projects-w" };
+  const MIN = { chat: 260, projects: 160 }; // px floor per panel
+  const STORE_KEY = "atoms:panelWidths";
+
+  // Restore saved widths.
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+    for (const [target, cssVar] of Object.entries(VARS)) {
+      if (typeof saved[target] === "number") {
+        layout.style.setProperty(cssVar, `${saved[target]}px`);
+      }
+    }
+  } catch { /* ignore malformed storage */ }
+
+  function persist() {
+    const out = {};
+    for (const [target, cssVar] of Object.entries(VARS)) {
+      const v = parseInt(getComputedStyle(layout).getPropertyValue(cssVar), 10);
+      if (!Number.isNaN(v)) out[target] = v;
+    }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(out)); } catch { /* quota */ }
+  }
+
+  let active = null; // { target, cssVar, startX, startW, maxW }
+
+  function onMove(e) {
+    if (!active) return;
+    const dx = e.clientX - active.startX;
+    let w = active.startW + dx;
+    w = Math.max(MIN[active.target], Math.min(w, active.maxW));
+    layout.style.setProperty(active.cssVar, `${w}px`);
+  }
+
+  function onUp() {
+    if (!active) return;
+    active.el.classList.remove("dragging");
+    document.body.classList.remove("resizing");
+    active = null;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    persist();
+  }
+
+  for (const el of document.querySelectorAll(".resizer")) {
+    el.addEventListener("pointerdown", (e) => {
+      const target = el.dataset.target;
+      const cssVar = VARS[target];
+      if (!cssVar) return;
+      e.preventDefault();
+      const startW = parseInt(getComputedStyle(layout).getPropertyValue(cssVar), 10) || 0;
+      // The dragged panel may grow only until the preview column hits its 320px
+      // floor, so it can gain at most (currentPreviewWidth - 320) pixels.
+      const previewW = document.querySelector(".preview-panel").clientWidth;
+      const maxW = startW + Math.max(0, previewW - 320);
+      active = { target, cssVar, el, startX: e.clientX, startW, maxW };
+      el.classList.add("dragging");
+      document.body.classList.add("resizing");
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  }
+})();
+
 // When language changes, re-render everything that was built dynamically.
 window.addEventListener("langchange", () => {
   renderAuth();
