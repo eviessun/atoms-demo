@@ -1,0 +1,24 @@
+name: keep-alive
+
+# Pings the Render free instance so it doesn't sleep from inactivity.
+# Render free services sleep after ~15 min idle; this hits it periodically.
+
+on:
+  schedule:
+    # Every 10 minutes. Note: GitHub may delay scheduled runs under load.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}  # allows manual trigger from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: |
+          URL="https://atoms-demo-lted.onrender.com/api/health"
+          echo "Pinging $URL"
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 --retry 2 --retry-delay 10 "$URL")
+          echo "HTTP status: $code"
+          if [ "$code" != "200" ]; then
+            echo "::warning::Keep-alive ping returned $code (service may be waking up)"
+          fi
