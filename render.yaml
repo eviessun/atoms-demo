@@ -10,7 +10,7 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
-        value: "3.12.0"
+        value: "3.12.7"
       # LLM provider — starts in keyless "mock" mode so the deploy works immediately.
       # Switch to openai/anthropic/atoms and add the key in the Render dashboard later.
       - key: LLM_PROVIDER
