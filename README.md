@@ -52,14 +52,32 @@ OPENAI_MODEL=gpt-4o-mini
 Only `app/llm.py` knows about providers — switching sources touches nothing else.
 The Atoms provider is stubbed and gets filled in once its endpoint/format is known.
 
-## Deploy (public link)
+## Deploy to Render (public link)
 
-Target platforms: **Render** or **Hugging Face Spaces** (both free, both give a public URL).
-Start command:
+This repo ships a `render.yaml` blueprint, so deploying is one connect step.
 
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
+1. Push this repo to GitHub (public).
+2. On https://render.com → **New +** → **Blueprint** → connect the repo.
+   Render reads `render.yaml` and provisions a free web service automatically.
+3. Wait for the build/deploy to finish → you get a public URL like
+   `https://atoms-demo.onrender.com`. Health check: `/api/health`.
+
+It deploys in keyless `mock` mode, so the public link works immediately. To wire a
+real LLM later, add env vars in the Render dashboard (Environment tab):
+
 ```
+LLM_PROVIDER = openai        # or anthropic / atoms
+OPENAI_API_KEY = sk-...
+```
+
+Manual (non-blueprint) settings, if you create the service by hand:
+
+- Runtime: Python 3.12
+- Build command: `pip install -r requirements.txt`
+- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+> Note: Render's free tier sleeps after inactivity; the first request after idle
+> takes ~30–60s to wake. Fine for a demo link.
 
 ## Roadmap
 

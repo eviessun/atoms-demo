@@ -1,0 +1,17 @@
+# Render deployment blueprint.
+# On Render: New + -> Blueprint -> connect this repo -> it reads this file.
+services:
+  - type: web
+    name: atoms-demo
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      # LLM provider — starts in keyless "mock" mode so the deploy works immediately.
+      # Switch to openai/anthropic/atoms and add the key in the Render dashboard later.
+      - key: LLM_PROVIDER
+        value: mock
