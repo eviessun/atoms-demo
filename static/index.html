@@ -52,7 +52,15 @@
         <span>Live preview</span>
         <span class="status" id="status">idle</span>
       </div>
-      <iframe id="preview" title="preview" sandbox="allow-scripts allow-forms allow-modals"></iframe>
+      <div class="preview-body">
+        <div class="preview-placeholder" id="preview-placeholder">
+          <div class="ph-icon">🖼️</div>
+          <p class="ph-title">Your app preview appears here</p>
+          <p class="ph-hint">Describe an app on the left and hit <strong>Generate</strong>.</p>
+        </div>
+        <iframe id="preview" title="preview" class="hidden"
+                sandbox="allow-scripts allow-forms allow-modals"></iframe>
+      </div>
     </section>
   </main>
 

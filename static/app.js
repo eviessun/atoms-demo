@@ -8,6 +8,7 @@ const promptEl = document.getElementById("prompt");
 const sendBtn = document.getElementById("send");
 const statusEl = document.getElementById("status");
 const previewEl = document.getElementById("preview");
+const previewPlaceholder = document.getElementById("preview-placeholder");
 const providerBadge = document.getElementById("provider-badge");
 const authBox = document.getElementById("auth-box");
 const projectsList = document.getElementById("projects-list");
@@ -27,6 +28,13 @@ function addMessage(role, text) {
 
 function setStatus(s) {
   statusEl.textContent = s;
+}
+
+// Swap the dark placeholder for the (white) iframe once we have content to show.
+function showPreview(html) {
+  previewEl.srcdoc = html;
+  previewPlaceholder.classList.add("hidden");
+  previewEl.classList.remove("hidden");
 }
 
 async function api(path, opts = {}) {
@@ -139,7 +147,7 @@ async function loadProjects() {
 async function openProject(id) {
   const { ok, data } = await api(`/api/projects/${id}`);
   if (!ok) { addMessage("assistant", `Couldn't open project #${id}.`); return; }
-  previewEl.srcdoc = data.html;
+  showPreview(data.html);
   setStatus("ready");
   addMessage("assistant", `Loaded saved app #${id}: “${data.prompt}”.`);
 }
@@ -161,7 +169,7 @@ async function generate(prompt) {
       body: JSON.stringify({ prompt }),
     });
     if (!ok) throw new Error(data.error || `HTTP ${status}`);
-    previewEl.srcdoc = data.html;
+    showPreview(data.html);
     setStatus("ready");
     const saved = data.project_id ? ` (saved as #${data.project_id})` : "";
     addMessage("assistant", `Done — rendered on the right (via ${data.provider})${saved}.`);
