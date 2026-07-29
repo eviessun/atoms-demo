@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atoms Demo</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚛</span>
+      <span>Atoms Demo</span>
+    </div>
+    <div class="badge" id="provider-badge">provider: …</div>
+  </header>
+
+  <main class="layout">
+    <!-- Left: chat / prompt panel -->
+    <section class="chat-panel">
+      <div class="messages" id="messages">
+        <div class="msg assistant">
+          <p>Describe an app and I'll build it, then preview it on the right.</p>
+          <p class="hint">Try: “a pomodoro timer with start/pause and a task list”.</p>
+        </div>
+      </div>
+      <form class="composer" id="composer">
+        <textarea id="prompt" rows="3" placeholder="Describe the app you want…"></textarea>
+        <button type="submit" id="send">Generate</button>
+      </form>
+    </section>
+
+    <!-- Right: live preview -->
+    <section class="preview-panel">
+      <div class="preview-toolbar">
+        <span>Live preview</span>
+        <span class="status" id="status">idle</span>
+      </div>
+      <iframe id="preview" title="preview" sandbox="allow-scripts allow-forms allow-modals"></iframe>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
