@@ -439,27 +439,38 @@ body.resizing-v iframe { pointer-events: none; }
   overflow: auto;
 }
 
-/* live code being written */
-.msg .code-progress { margin-top: 8px; }
-.msg .code-progress .code-label {
-  font-size: 0.8rem;
+/* File strip (Trae-style): sits above the composer, lists the generated file.
+   Clicking a file opens its source in the preview panel's Code tab. */
+.file-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--tint-border);
+  background: var(--tint);
+  flex-shrink: 0;
+}
+.file-strip-label {
   color: var(--muted);
-  margin-bottom: 4px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
-.msg .code-progress pre {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: #0f1729;
-  color: #cdd6f4;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 260px;
-  overflow: auto;
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: #ffffff;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
 }
+.file-chip:hover { border-color: var(--accent); color: var(--accent); }
+.file-chip .file-icon { font-size: 0.9rem; }
 
 
 .composer {
@@ -502,6 +513,79 @@ body.resizing-v iframe { pointer-events: none; }
   flex-shrink: 0;
 }
 .new-app:hover { background: var(--accent); color: var(--accent-ink); }
+
+/* Spacer pushes the history / new-app buttons to the right of the mode bar. */
+.mode-spacer { flex: 1; }
+
+/* "Version history" trigger — quieter than new-app (muted, not accent). */
+.history-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.history-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* --- Version history dialog (reuses .modal-overlay / .modal) ------------- */
+.history-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.history-list .empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+  padding: 12px 4px;
+}
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.history-info { flex: 1; min-width: 0; }
+.history-title {
+  font-size: 0.86rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-meta {
+  margin-top: 2px;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.history-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Compact buttons used inside the history rows. */
+.small {
+  padding: 5px 10px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border-radius: 8px;
+}
+.ghost.small {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.ghost.small:hover { border-color: var(--accent); color: var(--accent); }
 
 textarea {
   width: 100%;
@@ -548,6 +632,21 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .status { text-transform: uppercase; letter-spacing: 0.05em; }
 
+/* Preview / Code tabs in the preview toolbar */
+.preview-tabs { display: flex; gap: 4px; }
+.preview-tab {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.preview-tab:hover { color: var(--text); background: var(--tint); }
+.preview-tab.active { color: var(--accent); background: var(--tint); }
+
 .preview-body {
   flex: 1;
   position: relative;
@@ -579,6 +678,50 @@ iframe {
   height: 100%;
   border: 0;
   background: #fff;
+}
+
+/* Code view: fills the preview body when the Code tab is active. Shows the
+   generated index.html source — live while streaming, final once done. */
+.code-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0f1729;
+  overflow: hidden;
+}
+.code-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #cdd6f4;
+  font-size: 0.78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  flex-shrink: 0;
+}
+.code-copy {
+  background: transparent;
+  color: #a6adc8;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.code-copy:hover { color: #fff; border-color: rgba(255, 255, 255, 0.35); }
+.code-view-body {
+  flex: 1;
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  color: #cdd6f4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .hidden { display: none !important; }

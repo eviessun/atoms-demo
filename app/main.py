@@ -351,6 +351,48 @@ def project_detail(project_id: int, request: Request):
     return dict(row)
 
 
+# --- version history + rollback ------------------------------------------
+
+@app.get("/api/projects/{project_id}/versions")
+def project_versions(project_id: int, request: Request):
+    """List a project's version snapshots (newest first, metadata only). Every
+    generate/iterate/restore appends one, so this is the app's undo history."""
+    user = auth.current_user(request)
+    if user is None:
+        return JSONResponse(status_code=401, content={"error": "login required"})
+    if db.get_project(user["id"], project_id) is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    rows = db.list_versions(user["id"], project_id)
+    return {"versions": [dict(r) for r in rows]}
+
+
+@app.get("/api/projects/{project_id}/versions/{version_id}")
+def project_version_detail(project_id: int, version_id: int, request: Request):
+    """Fetch one snapshot's full HTML — used to preview an old version before
+    deciding whether to roll back to it."""
+    user = auth.current_user(request)
+    if user is None:
+        return JSONResponse(status_code=401, content={"error": "login required"})
+    row = db.get_version(user["id"], project_id, version_id)
+    if row is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return dict(row)
+
+
+@app.post("/api/projects/{project_id}/versions/{version_id}/restore")
+def project_version_restore(project_id: int, version_id: int, request: Request):
+    """Roll the project back to an earlier snapshot. Non-destructive: the
+    restore is itself appended as a new version, so nothing is lost and the
+    user can roll forward again."""
+    user = auth.current_user(request)
+    if user is None:
+        return JSONResponse(status_code=401, content={"error": "login required"})
+    row = db.restore_version(user["id"], project_id, version_id)
+    if row is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return dict(row)
+
+
 # --- frontend ------------------------------------------------------------
 
 @app.get("/")

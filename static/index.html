@@ -55,7 +55,19 @@
       <!-- Mode banner: shows whether we're building a new app or editing one -->
       <div class="mode-bar" id="mode-bar">
         <span class="mode-label" id="mode-label" data-i18n="app.mode_new">新建应用</span>
+        <span class="mode-spacer"></span>
+        <button type="button" id="history-btn" class="history-btn hidden"
+                data-i18n-tooltip="app.history_open" title="查看版本历史">🕘 <span data-i18n="app.history">版本历史</span></button>
         <button type="button" id="new-app" class="new-app hidden" data-i18n="app.new_app">＋ 新应用</button>
+      </div>
+      <!-- File tree (Trae-style): the app we generate is a single index.html.
+           Click it to open its source in the preview panel's Code tab. -->
+      <div class="file-strip hidden" id="file-strip">
+        <span class="file-strip-label" data-i18n="app.files">文件</span>
+        <button type="button" class="file-chip" id="file-chip" data-file="index.html">
+          <span class="file-icon" aria-hidden="true">📄</span>
+          <span class="file-name">index.html</span>
+        </button>
       </div>
       <form class="composer" id="composer">
         <textarea id="prompt" rows="3" data-i18n-placeholder="app.prompt_ph" placeholder="描述你想要的应用…"></textarea>
@@ -69,7 +81,12 @@
     <!-- Right: live preview -->
     <section class="preview-panel">
       <div class="preview-toolbar">
-        <span data-i18n="app.preview">实时预览</span>
+        <div class="preview-tabs" id="preview-tabs" role="tablist">
+          <button type="button" class="preview-tab active" id="tab-preview"
+                  data-tab="preview" role="tab" data-i18n="app.tab_preview">预览</button>
+          <button type="button" class="preview-tab" id="tab-code"
+                  data-tab="code" role="tab" data-i18n="app.tab_code">代码</button>
+        </div>
         <span class="status" id="status" data-i18n="status.idle">空闲</span>
       </div>
       <div class="preview-body">
@@ -99,6 +116,16 @@
         </div>
         <iframe id="preview" title="preview" class="hidden"
                 sandbox="allow-scripts allow-forms allow-modals"></iframe>
+        <!-- Code view: shows the generated index.html source. Fills live while
+             streaming, then holds the final source once generation completes. -->
+        <div class="code-view hidden" id="code-view">
+          <div class="code-view-head">
+            <span class="code-view-file">index.html</span>
+            <button type="button" class="code-copy" id="code-copy"
+                    data-i18n-tooltip="app.copy" title="复制 / Copy">⧉</button>
+          </div>
+          <pre class="code-view-body"><code id="code-content"></code></pre>
+        </div>
       </div>
     </section>
   </main>
@@ -149,6 +176,19 @@
           <button type="submit" id="byok-save" data-i18n="byok.save">保存</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Version history dialog: lists a project's snapshots (newest first) with
+       Preview (load into the iframe without committing) and Roll back (restore,
+       itself recorded as a new version so nothing is ever lost). -->
+  <div class="modal-overlay hidden" id="history-overlay">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="history-title">
+      <div class="modal-head">
+        <h2 id="history-title" data-i18n="app.history">版本历史</h2>
+        <button type="button" class="modal-close" id="history-x" aria-label="close">✕</button>
+      </div>
+      <ul class="history-list" id="history-list"></ul>
     </div>
   </div>
 

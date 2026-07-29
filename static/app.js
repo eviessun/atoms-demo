@@ -16,6 +16,22 @@ const refreshBtn = document.getElementById("refresh-projects");
 const langToggle = document.getElementById("lang-toggle");
 const modeLabel = document.getElementById("mode-label");
 const newAppBtn = document.getElementById("new-app");
+// Version history dialog
+const historyBtn = document.getElementById("history-btn");
+const historyOverlay = document.getElementById("history-overlay");
+const historyList = document.getElementById("history-list");
+const historyX = document.getElementById("history-x");
+// Preview panel: Preview/Code tabs + code view (Trae-style)
+const previewTabs = document.getElementById("preview-tabs");
+const tabPreview = document.getElementById("tab-preview");
+const tabCode = document.getElementById("tab-code");
+const codeView = document.getElementById("code-view");
+const codeContent = document.getElementById("code-content");
+const codeCopy = document.getElementById("code-copy");
+const codeScroller = codeContent.parentElement;   // the scrollable <pre>
+// File strip above the composer
+const fileStrip = document.getElementById("file-strip");
+const fileChip = document.getElementById("file-chip");
 // BYOK dialog elements
 const byokGear = document.getElementById("byok-gear");
 const byokOverlay = document.getElementById("byok-overlay");
@@ -59,11 +75,35 @@ function setStatus(key) {
   statusEl.textContent = i18n.t(key);
 }
 
+// --- preview panel: Preview / Code tabs ---------------------------------
+// The right panel shows either the running app (iframe) or its source. During
+// generation we auto-switch to Code so the user watches it being written, then
+// flip back to Preview once it's done. The tab buttons let them toggle freely.
+
+let activeTab = "preview";   // "preview" | "code"
+
+function switchTab(tab) {
+  activeTab = tab;
+  tabPreview.classList.toggle("active", tab === "preview");
+  tabCode.classList.toggle("active", tab === "code");
+  // Preview view = placeholder-or-iframe; Code view = source pre.
+  const showCode = tab === "code";
+  codeView.classList.toggle("hidden", !showCode);
+  // In preview mode, show whichever of placeholder/iframe is appropriate.
+  previewPlaceholder.classList.toggle("hidden", showCode || currentHtml != null);
+  previewEl.classList.toggle("hidden", showCode || currentHtml == null);
+}
+
+// Put source into the Code tab. Used both live (streaming) and on completion.
+function setCode(source) {
+  codeContent.textContent = source;
+}
+
 // Swap the dark placeholder for the (white) iframe once we have content to show.
 function showPreview(html) {
   previewEl.srcdoc = html;
-  previewPlaceholder.classList.add("hidden");
-  previewEl.classList.remove("hidden");
+  setCode(html);
+  switchTab("preview");
 }
 
 // --- create / iterate mode ----------------------------------------------
@@ -84,6 +124,10 @@ function renderMode() {
     promptEl.placeholder = i18n.t("app.prompt_ph");
     newAppBtn.classList.add("hidden");
   }
+  // The file strip only makes sense once there's an app (a file) to show.
+  fileStrip.classList.toggle("hidden", !editing);
+  // Version history exists only for saved projects (persisted server-side).
+  historyBtn.classList.toggle("hidden", !(editing && currentProjectId != null));
 }
 
 // Enter edit mode for a given app (after generate / open).
@@ -99,8 +143,8 @@ function startNewApp() {
   currentProjectId = null;
   currentHtml = null;
   currentTitle = "";
-  previewEl.classList.add("hidden");
-  previewPlaceholder.classList.remove("hidden");
+  setCode("");
+  switchTab("preview");   // reset to the placeholder
   setStatus("status.idle");
   renderMode();
   addMessage("assistant", i18n.t("msg.new_app"));
@@ -199,11 +243,108 @@ async function loadProjects() {
 async function openProject(id) {
   const { ok, data } = await api(`/api/projects/${id}`);
   if (!ok) { addMessage("assistant", i18n.t("msg.open_fail", { id })); return; }
+  enterEditMode({ projectId: id, html: data.html, title: data.prompt });
   showPreview(data.html);
   setStatus("status.ready");
-  enterEditMode({ projectId: id, html: data.html, title: data.prompt });
   addMessage("assistant", i18n.t("msg.loaded", { id, prompt: data.prompt }));
 }
+
+// --- version history + rollback -----------------------------------------
+// Every generate/iterate/restore appends a snapshot server-side. This dialog
+// lists them newest-first; "Preview" loads an old snapshot into the iframe
+// without committing, and "Roll back" restores it (itself recorded as a new
+// version, so history is never truncated).
+
+function closeHistoryDialog() { historyOverlay.classList.add("hidden"); }
+
+async function openHistoryDialog() {
+  if (currentProjectId == null) return;
+  historyList.innerHTML = "";
+  historyOverlay.classList.remove("hidden");
+  const { ok, data } = await api(`/api/projects/${currentProjectId}/versions`);
+  const versions = ok ? (data.versions || []) : [];
+  renderHistory(versions);
+}
+
+function renderHistory(versions) {
+  historyList.innerHTML = "";
+  if (!versions.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = i18n.t("app.history_none");
+    historyList.appendChild(li);
+    return;
+  }
+  versions.forEach((v, i) => {
+    const li = document.createElement("li");
+    li.className = "history-item";
+
+    const info = document.createElement("div");
+    info.className = "history-info";
+    const title = document.createElement("div");
+    title.className = "history-title";
+    // Newest row is the project's current state — flag it.
+    const badge = i === 0 ? ` · ${i18n.t("app.history_current")}` : "";
+    title.textContent = v.prompt;
+    const meta = document.createElement("div");
+    meta.className = "history-meta";
+    meta.textContent = `v${v.id} · ${v.provider} · ${v.created_at}${badge}`;
+    info.append(title, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "history-actions";
+    const preview = document.createElement("button");
+    preview.className = "ghost small";
+    preview.textContent = i18n.t("app.version_preview");
+    preview.onclick = () => previewVersion(v.id);
+    actions.appendChild(preview);
+    // No point offering "roll back" to the state we're already on.
+    if (i !== 0) {
+      const restore = document.createElement("button");
+      restore.className = "small";
+      restore.textContent = i18n.t("app.version_restore");
+      restore.onclick = () => restoreVersion(v.id);
+      actions.appendChild(restore);
+    }
+
+    li.append(info, actions);
+    historyList.appendChild(li);
+  });
+}
+
+// Load an old snapshot into the preview WITHOUT changing the saved project.
+async function previewVersion(versionId) {
+  const { ok, data } = await api(`/api/projects/${currentProjectId}/versions/${versionId}`);
+  if (!ok) return;
+  showPreview(data.html);
+  setStatus("status.ready");
+  closeHistoryDialog();
+  addMessage("assistant", i18n.t("msg.version_previewing", { id: versionId }));
+}
+
+// Restore an old snapshot as the current project state (non-destructive).
+async function restoreVersion(versionId) {
+  const { ok, data } = await api(
+    `/api/projects/${currentProjectId}/versions/${versionId}/restore`,
+    { method: "POST" }
+  );
+  if (!ok) {
+    addMessage("assistant", i18n.t("msg.version_restore_fail", { msg: data.error || "" }));
+    return;
+  }
+  showPreview(data.html);
+  setStatus("status.ready");
+  enterEditMode({ projectId: data.id, html: data.html, title: data.prompt });
+  closeHistoryDialog();
+  addMessage("assistant", i18n.t("msg.version_restored", { id: versionId }));
+  loadProjects();
+}
+
+historyBtn.addEventListener("click", openHistoryDialog);
+historyX.addEventListener("click", closeHistoryDialog);
+historyOverlay.addEventListener("click", (e) => {
+  if (e.target === historyOverlay) closeHistoryDialog();
+});
 
 // --- generate ------------------------------------------------------------
 
@@ -389,10 +530,12 @@ function composeBody(prompt, editing) {
 // for both the blocking and streaming paths: render the preview, enter edit
 // mode, report where it was saved, and refresh the project list.
 function afterGenerate({ prompt, editing, html, provider, projectId, iterated }) {
+  if (!editing) currentTitle = prompt;
+  // Set state (currentHtml) first so showPreview picks the iframe, not the
+  // placeholder, when it flips back to the Preview tab.
+  enterEditMode({ projectId, html, title: currentTitle });
   showPreview(html);
   setStatus("status.ready");
-  if (!editing) currentTitle = prompt;
-  enterEditMode({ projectId, html, title: currentTitle });
 
   const didEdit = editing || iterated;
   let saved = "";
@@ -430,11 +573,10 @@ async function generate(prompt) {
   }
 }
 
-// A live assistant message that grows as SSE events arrive: a collapsible
-// "reasoning" block (the model's chain-of-thought) and a live code-progress
-// <pre>. Both stay hidden until their first token. Returns handles the stream
-// dispatcher uses to append text incrementally, keeping the view pinned to the
-// bottom only while the user is already near it.
+// A live assistant message that grows as SSE events arrive. It shows the
+// model's status and a collapsible "reasoning" block (chain-of-thought). The
+// generated CODE no longer dumps into the chat — it streams into the preview
+// panel's Code tab instead (Trae-style), keeping the conversation readable.
 function addStreamingMessage() {
   const div = document.createElement("div");
   div.className = "msg assistant streaming";
@@ -454,21 +596,17 @@ function addStreamingMessage() {
   details.append(summary, reasoningBody);
   div.appendChild(details);
 
-  const codeWrap = document.createElement("div");
-  codeWrap.className = "code-progress hidden";
-  const codeLabel = document.createElement("div");
-  codeLabel.className = "code-label";
-  codeLabel.textContent = i18n.t("app.generating_code");
-  const codePre = document.createElement("pre");
-  codeWrap.append(codeLabel, codePre);
-  div.appendChild(codeWrap);
-
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 
   const nearBottom = () =>
     messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
   const stick = (fn) => { const s = nearBottom(); fn(); if (s) messagesEl.scrollTop = messagesEl.scrollHeight; };
+
+  // The code streams into the right-hand Code view. Accumulate locally and
+  // auto-scroll that pane so the newest lines stay visible.
+  let codeBuf = "";
+  let codeStarted = false;
 
   return {
     setModel(label) {
@@ -478,7 +616,17 @@ function addStreamingMessage() {
       stick(() => { details.classList.remove("hidden"); reasoningBody.textContent += delta; });
     },
     content(delta) {
-      stick(() => { codeWrap.classList.remove("hidden"); codePre.textContent += delta; });
+      // First code token: flip the panel to the Code tab so the user watches
+      // it being written, and label the composer/chat status accordingly.
+      if (!codeStarted) {
+        codeStarted = true;
+        status.textContent = i18n.t("app.generating_code");
+        switchTab("code");
+      }
+      codeBuf += delta;
+      setCode(codeBuf);
+      // keep the code pane pinned to the newest lines
+      codeScroller.scrollTop = codeScroller.scrollHeight;
     },
     done() {
       div.classList.remove("streaming");
@@ -590,6 +738,21 @@ composer.addEventListener("submit", (e) => {
 refreshBtn.addEventListener("click", loadProjects);
 langToggle.addEventListener("click", () => i18n.toggle());
 newAppBtn.addEventListener("click", startNewApp);
+
+// Preview/Code tabs, file chip, and copy button.
+tabPreview.addEventListener("click", () => switchTab("preview"));
+tabCode.addEventListener("click", () => switchTab("code"));
+// Clicking the file opens its source in the Code tab (single-file app).
+fileChip.addEventListener("click", () => switchTab("code"));
+codeCopy.addEventListener("click", async () => {
+  if (!currentHtml) return;
+  try {
+    await navigator.clipboard.writeText(currentHtml);
+    const prev = codeCopy.textContent;
+    codeCopy.textContent = "✓";
+    setTimeout(() => { codeCopy.textContent = prev; }, 1200);
+  } catch { /* clipboard blocked; no-op */ }
+});
 
 // --- resizable panels ----------------------------------------------------
 // Layout order: projects | resizer | chat(flex) | resizer | preview.

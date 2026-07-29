@@ -11,9 +11,12 @@ is identical for both backends, so app code never needs to know which is active.
 Rows are returned as mappings supporting row["col"] and dict(row) on both backends.
 
 Tables:
-  users     — id, email (unique), password_hash, created_at
-  sessions  — token (pk), user_id, created_at
-  projects  — id, user_id, prompt, html, provider, created_at
+  users            — id, email (unique), password_hash, created_at
+  sessions         — token (pk), user_id, created_at
+  projects         — id, user_id, prompt, html, provider, created_at
+  project_versions — id, project_id, prompt, html, provider, created_at
+                     (append-only snapshot per generate/iterate/restore; the
+                      projects.html column always mirrors the latest version)
 """
 from __future__ import annotations
 
@@ -66,6 +69,16 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS project_versions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    prompt     TEXT NOT NULL,
+    html       TEXT NOT NULL,
+    provider   TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+CREATE INDEX IF NOT EXISTS idx_pv_project ON project_versions(project_id);
 """
 
 _SCHEMA_POSTGRES = """
@@ -88,6 +101,15 @@ CREATE TABLE IF NOT EXISTS projects (
     provider   TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS project_versions (
+    id         BIGSERIAL PRIMARY KEY,
+    project_id BIGINT NOT NULL REFERENCES projects(id),
+    prompt     TEXT NOT NULL,
+    html       TEXT NOT NULL,
+    provider   TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_pv_project ON project_versions(project_id);
 """
 
 
@@ -154,6 +176,8 @@ def init_db() -> None:
                 cur.execute(schema)
         else:
             conn.executescript(schema)
+    # Give any pre-versioning projects an initial snapshot (idempotent).
+    backfill_versions()
 
 
 # --- users ---------------------------------------------------------------
@@ -204,12 +228,21 @@ def delete_session(token: str) -> None:
 # --- projects ------------------------------------------------------------
 
 def create_project(user_id: int, prompt: str, html: str, provider: str) -> int:
+    """Create a project and record its first version snapshot in one
+    transaction. projects.html is the 'current' state; project_versions is the
+    append-only history that powers rollback."""
     with get_conn() as conn:
-        return _insert_returning_id(
+        project_id = _insert_returning_id(
             conn,
             "INSERT INTO projects (user_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
             (user_id, prompt, html, provider),
         )
+        _execute(
+            conn,
+            "INSERT INTO project_versions (project_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
+            (project_id, prompt, html, provider),
+        )
+        return project_id
 
 
 def list_projects(user_id: int) -> list:
@@ -235,27 +268,132 @@ def get_project(user_id: int, project_id: int) -> Optional[Any]:
 
 
 def update_project_html(user_id: int, project_id: int, prompt: str, html: str, provider: str) -> bool:
-    """Update an existing project in place (iterate loop). Owner-scoped: the
-    WHERE clause includes user_id so a user can only modify their own project.
-    Returns True if a row was updated, False if not found / not owned.
+    """Update an existing project in place (iterate loop) and append a new
+    version snapshot, in one transaction. Owner-scoped: the WHERE clause
+    includes user_id so a user can only modify their own project. Returns True
+    if a row was updated, False if not found / not owned.
 
     `prompt` records the latest change request and `provider` the model that
-    produced this revision (the original create-time values are overwritten,
-    which is fine — the list view just shows the most recent state)."""
-    if IS_POSTGRES:
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                _q(
-                    "UPDATE projects SET prompt = ?, html = ?, provider = ? "
-                    "WHERE id = ? AND user_id = ?"
-                ),
+    produced this revision. The projects row holds the newest state (shown in
+    the list); every revision is preserved in project_versions for rollback."""
+    with get_conn() as conn:
+        if IS_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute(
+                    _q(
+                        "UPDATE projects SET prompt = ?, html = ?, provider = ? "
+                        "WHERE id = ? AND user_id = ?"
+                    ),
+                    (prompt, html, provider, project_id, user_id),
+                )
+                updated = cur.rowcount > 0
+        else:
+            cur = conn.execute(
+                "UPDATE projects SET prompt = ?, html = ?, provider = ? "
+                "WHERE id = ? AND user_id = ?",
                 (prompt, html, provider, project_id, user_id),
             )
-            return cur.rowcount > 0
+            updated = cur.rowcount > 0
+        if updated:
+            _execute(
+                conn,
+                "INSERT INTO project_versions (project_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
+                (project_id, prompt, html, provider),
+            )
+        return updated
+
+
+# --- project versions (history + rollback) -------------------------------
+
+def list_versions(user_id: int, project_id: int) -> list:
+    """List a project's version snapshots (newest first), owner-scoped via a
+    join on projects.user_id. Omits the (large) html column — the list view
+    only needs metadata; html is fetched per-version on demand."""
     with get_conn() as conn:
-        cur = conn.execute(
+        return _fetchall(
+            conn,
+            """
+            SELECT v.id, v.prompt, v.provider, v.created_at
+            FROM project_versions v
+            JOIN projects p ON p.id = v.project_id
+            WHERE v.project_id = ? AND p.user_id = ?
+            ORDER BY v.id DESC
+            """,
+            (project_id, user_id),
+        )
+
+
+def get_version(user_id: int, project_id: int, version_id: int) -> Optional[Any]:
+    """Fetch one version snapshot (including html), owner-scoped."""
+    with get_conn() as conn:
+        return _fetchone(
+            conn,
+            """
+            SELECT v.id, v.project_id, v.prompt, v.html, v.provider, v.created_at
+            FROM project_versions v
+            JOIN projects p ON p.id = v.project_id
+            WHERE v.id = ? AND v.project_id = ? AND p.user_id = ?
+            """,
+            (version_id, project_id, user_id),
+        )
+
+
+def restore_version(user_id: int, project_id: int, version_id: int) -> Optional[Any]:
+    """Roll a project back to an earlier version. Non-destructive: we copy the
+    target snapshot's html/prompt/provider onto the current project AND append
+    it as a NEW version, so the history is never truncated (you can always roll
+    forward again). Returns the restored project row, or None if the version
+    isn't found / not owned. Runs in a single transaction."""
+    with get_conn() as conn:
+        target = _fetchone(
+            conn,
+            """
+            SELECT v.prompt, v.html, v.provider
+            FROM project_versions v
+            JOIN projects p ON p.id = v.project_id
+            WHERE v.id = ? AND v.project_id = ? AND p.user_id = ?
+            """,
+            (version_id, project_id, user_id),
+        )
+        if target is None:
+            return None
+        prompt = f"↩ restored v{version_id}: {target['prompt']}"
+        html, provider = target["html"], target["provider"]
+        _execute(
+            conn,
             "UPDATE projects SET prompt = ?, html = ?, provider = ? "
             "WHERE id = ? AND user_id = ?",
             (prompt, html, provider, project_id, user_id),
         )
-        return cur.rowcount > 0
+        _execute(
+            conn,
+            "INSERT INTO project_versions (project_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
+            (project_id, prompt, html, provider),
+        )
+        return _fetchone(
+            conn,
+            "SELECT * FROM projects WHERE id = ? AND user_id = ?",
+            (project_id, user_id),
+        )
+
+
+def backfill_versions() -> None:
+    """One-time migration for projects created before versioning existed: give
+    each project with zero versions an initial snapshot from its current state,
+    so their history isn't empty. Idempotent — safe to run on every startup."""
+    with get_conn() as conn:
+        orphans = _fetchall(
+            conn,
+            """
+            SELECT p.id, p.prompt, p.html, p.provider
+            FROM projects p
+            LEFT JOIN project_versions v ON v.project_id = p.id
+            WHERE v.id IS NULL
+            """,
+        )
+        for row in orphans:
+            _execute(
+                conn,
+                "INSERT INTO project_versions (project_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
+                (row["id"], row["prompt"], row["html"], row["provider"]),
+            )
