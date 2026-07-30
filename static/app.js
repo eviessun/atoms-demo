@@ -121,9 +121,16 @@ function setCode(source) {
 
 // Swap the dark placeholder for the (white) iframe once we have content to show.
 function showPreview(html) {
-  previewEl.srcdoc = html;
   setCode(html);
-  switchTab("preview");
+  previewEl.srcdoc = html;
+  // Reveal (hidden -> visible) on the NEXT frame, not this one. During
+  // streaming we're on the Code tab, so the iframe is display:none when srcdoc
+  // is assigned above. Assigning srcdoc and un-hiding in the SAME task leaves
+  // some engines (Chromium) rendering the iframe blank/stale after an iterate.
+  // Deferring the reveal to a separate frame performs a clean display
+  // transition — exactly what a manual Code->Preview tab click does, which we
+  // confirmed always repaints — so the new document actually shows.
+  requestAnimationFrame(() => switchTab("preview"));
 }
 
 // --- create / iterate mode ----------------------------------------------
