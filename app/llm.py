@@ -69,6 +69,51 @@ def _edit_user_content(base_html: str, instruction: str) -> str:
     )
 
 
+# --- multimodal helpers ---------------------------------------------------
+# Images arrive from the frontend as data URLs ("data:image/png;base64,AAAA...").
+# A text-only request keeps message content as a plain string (unchanged wire
+# format); only when there are images do we switch to the provider's structured
+# content list. The two providers want different shapes, hence two builders.
+
+def _parse_data_url(data_url: str) -> tuple[str, str] | None:
+    """Split a data URL into (media_type, base64_payload). Returns None if it
+    isn't a base64 data URL we can forward (so we simply drop it)."""
+    m = re.match(r"data:([^;,]+);base64,(.*)$", (data_url or "").strip(), re.DOTALL)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _openai_user_content(text: str, images: list[str] | None):
+    """Build the OpenAI-compatible user content. Plain string when there are no
+    images; otherwise a [text, image_url...] list (the format GPT-4o / Gemma /
+    Doubao vision expect). Data URLs are passed straight through as image_url."""
+    if not images:
+        return text
+    parts: list[dict] = [{"type": "text", "text": text}]
+    for url in images:
+        if _parse_data_url(url):  # only forward well-formed base64 data URLs
+            parts.append({"type": "image_url", "image_url": {"url": url}})
+    return parts
+
+
+def _anthropic_user_content(text: str, images: list[str] | None):
+    """Build the Anthropic user content. Plain string when there are no images;
+    otherwise a list of blocks with base64 image sources (Claude's format)."""
+    if not images:
+        return text
+    blocks: list[dict] = [{"type": "text", "text": text}]
+    for url in images:
+        parsed = _parse_data_url(url)
+        if parsed:
+            media_type, data = parsed
+            blocks.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": media_type, "data": data},
+            })
+    return blocks
+
+
 def _strip_code_fences(text: str) -> str:
     """Some models wrap output in ```html ... ``` despite instructions."""
     t = text.strip()
@@ -156,22 +201,21 @@ def _mock_html(prompt: str, base_html: str | None = None) -> str:
     ).strip()
 
 
-def _openai_html(spec: ModelSpec, prompt: str, base_html: str | None = None) -> str:
+def _openai_html(
+    spec: ModelSpec, prompt: str, base_html: str | None = None,
+    images: list[str] | None = None,
+) -> str:
     headers = {"Authorization": f"Bearer {spec.api_key}"}
     # OpenRouter (a common free-tier gateway) recommends these; harmless elsewhere.
     if "openrouter.ai" in spec.base_url:
         headers["HTTP-Referer"] = "https://atoms-demo-lted.onrender.com"
         headers["X-Title"] = settings.APP_NAME
-    if base_html:
-        messages = [
-            {"role": "system", "content": EDIT_SYSTEM_PROMPT},
-            {"role": "user", "content": _edit_user_content(base_html, prompt)},
-        ]
-    else:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
+    text = _edit_user_content(base_html, prompt) if base_html else prompt
+    system = EDIT_SYSTEM_PROMPT if base_html else SYSTEM_PROMPT
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": _openai_user_content(text, images)},
+    ]
     resp = httpx.post(
         f"{spec.base_url}/chat/completions",
         headers=headers,
@@ -186,9 +230,12 @@ def _openai_html(spec: ModelSpec, prompt: str, base_html: str | None = None) -> 
     return _strip_code_fences(resp.json()["choices"][0]["message"]["content"])
 
 
-def _anthropic_html(spec: ModelSpec, prompt: str, base_html: str | None = None) -> str:
+def _anthropic_html(
+    spec: ModelSpec, prompt: str, base_html: str | None = None,
+    images: list[str] | None = None,
+) -> str:
     system = EDIT_SYSTEM_PROMPT if base_html else SYSTEM_PROMPT
-    user = _edit_user_content(base_html, prompt) if base_html else prompt
+    text = _edit_user_content(base_html, prompt) if base_html else prompt
     resp = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -199,7 +246,7 @@ def _anthropic_html(spec: ModelSpec, prompt: str, base_html: str | None = None) 
             "model": spec.model,
             "max_tokens": 4096,
             "system": system,
-            "messages": [{"role": "user", "content": user}],
+            "messages": [{"role": "user", "content": _anthropic_user_content(text, images)}],
         },
         timeout=120,
     )
@@ -207,11 +254,18 @@ def _anthropic_html(spec: ModelSpec, prompt: str, base_html: str | None = None) 
     return _strip_code_fences(resp.json()["content"][0]["text"])
 
 
-def _generate_with_spec(spec: ModelSpec, prompt: str, base_html: str | None = None) -> str:
+def _generate_with_spec(
+    spec: ModelSpec, prompt: str, base_html: str | None = None,
+    images: list[str] | None = None,
+) -> str:
+    # Only forward images to a vision-capable model; otherwise drop them so a
+    # stale client pick can't send images to a text-only endpoint (which some
+    # providers reject with a hard error).
+    imgs = images if (images and spec.vision) else None
     if spec.transport == "openai":
-        return _openai_html(spec, prompt, base_html)
+        return _openai_html(spec, prompt, base_html, imgs)
     if spec.transport == "anthropic":
-        return _anthropic_html(spec, prompt, base_html)
+        return _anthropic_html(spec, prompt, base_html, imgs)
     # default / "mock": no key required
     return _mock_html(prompt, base_html)
 
@@ -221,6 +275,7 @@ def generate_app_html(
     base_html: str | None = None,
     model_id: str | None = None,
     spec: ModelSpec | None = None,
+    images: list[str] | None = None,
 ) -> tuple[str, str]:
     """Turn a request into HTML. Returns (html, model_label_actually_used).
 
@@ -231,6 +286,9 @@ def generate_app_html(
 
     If base_html is given, the model edits that app in place (iterate loop);
     otherwise it builds a new app from scratch.
+
+    `images` (base64 data URLs) are forwarded only to vision-capable specs; the
+    mock/fallback path ignores them.
 
     If a *server-configured* model fails (bad key, quota, network) and
     LLM_FALLBACK_TO_MOCK is on, we degrade to the mock generator instead of
@@ -245,7 +303,7 @@ def generate_app_html(
             spec = get_model("mock")
 
     try:
-        return _generate_with_spec(spec, prompt, base_html), spec.label
+        return _generate_with_spec(spec, prompt, base_html, images), spec.label
     except Exception:
         # Surface BYOK errors verbatim (the user is debugging their own key);
         # only auto-degrade for server-managed models.
@@ -262,7 +320,10 @@ def generate_app_html(
 # is one of: "model" | "reasoning" | "content" | "done" | "error".
 
 
-def _openai_stream(spec: ModelSpec, prompt: str, base_html: str | None = None):
+def _openai_stream(
+    spec: ModelSpec, prompt: str, base_html: str | None = None,
+    images: list[str] | None = None,
+):
     """Yield ('reasoning', delta) / ('content', delta) from an SSE chat stream.
 
     Reasoning models expose their chain-of-thought in delta.reasoning
@@ -272,16 +333,12 @@ def _openai_stream(spec: ModelSpec, prompt: str, base_html: str | None = None):
     if "openrouter.ai" in spec.base_url:
         headers["HTTP-Referer"] = "https://atoms-demo-lted.onrender.com"
         headers["X-Title"] = settings.APP_NAME
-    if base_html:
-        messages = [
-            {"role": "system", "content": EDIT_SYSTEM_PROMPT},
-            {"role": "user", "content": _edit_user_content(base_html, prompt)},
-        ]
-    else:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
+    text = _edit_user_content(base_html, prompt) if base_html else prompt
+    system = EDIT_SYSTEM_PROMPT if base_html else SYSTEM_PROMPT
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": _openai_user_content(text, images)},
+    ]
     with httpx.stream(
         "POST",
         f"{spec.base_url}/chat/completions",
@@ -332,6 +389,7 @@ def stream_app_html(
     base_html: str | None = None,
     model_id: str | None = None,
     spec: ModelSpec | None = None,
+    images: list[str] | None = None,
 ):
     """Streaming twin of generate_app_html. Yields (kind, payload) events:
       ("model", label)      once, first — the model actually used
@@ -341,7 +399,8 @@ def stream_app_html(
       ("error", message)    on hard failure (fallback disabled / BYOK)
 
     Mirrors generate_app_html's spec resolution and graceful mock fallback
-    (BYOK errors surface verbatim), but streams instead of returning a blob."""
+    (BYOK errors surface verbatim), but streams instead of returning a blob.
+    `images` (base64 data URLs) are forwarded only to vision-capable specs."""
     byok = spec is not None
     if spec is None:
         spec = get_model(model_id) or get_model(settings.default_model_id())
@@ -350,10 +409,12 @@ def stream_app_html(
 
     def _source(s: ModelSpec):
         """Pick a per-transport event stream for spec `s`."""
+        # Only forward images to a vision-capable model (see _generate_with_spec).
+        imgs = images if (images and s.vision) else None
         if s.transport == "openai":
-            return _openai_stream(s, prompt, base_html)
+            return _openai_stream(s, prompt, base_html, imgs)
         if s.transport == "anthropic":
-            return _simulate_stream(_anthropic_html(s, prompt, base_html))
+            return _simulate_stream(_anthropic_html(s, prompt, base_html, imgs))
         return _simulate_stream(_mock_html(prompt, base_html))
 
     acc: list[str] = []

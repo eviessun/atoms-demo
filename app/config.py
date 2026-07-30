@@ -40,6 +40,10 @@ class ModelSpec:
     hidden:      keep it selectable/resolvable server-side but off the UI dropdown
                  (e.g. mock stays as the fallback/degrade target without being an
                  offered choice — see available_models() and default_model_id()).
+    vision:      whether the model accepts image input. The UI enables the image
+                 attach button only for vision models and greys it out otherwise;
+                 the server also skips attaching images for a non-vision spec so a
+                 stale client pick can't send images to a text-only model.
     """
     id: str
     label: str
@@ -49,6 +53,7 @@ class ModelSpec:
     api_key_env: str = ""
     free: bool = False
     hidden: bool = False
+    vision: bool = False
     # BYOK ("bring your own key"): a placeholder entry the UI always offers. The
     # real transport/model/base_url/key arrive per-request from the browser and
     # are used transiently — never read from the environment, never persisted.
@@ -95,6 +100,10 @@ MODEL_REGISTRY: list[ModelSpec] = [
         label="自定义（自备 Key）",
         transport="openai",
         byok=True,
+        # The user picks their own model, so we can't know its modality up front.
+        # Offer the image attach button and let their provider accept or reject
+        # the images — same "surface the real error" philosophy as BYOK keys.
+        vision=True,
     ),
     # --- DeepSeek (direct) — OpenAI-compatible -------------------------------
     ModelSpec(
@@ -122,6 +131,7 @@ MODEL_REGISTRY: list[ModelSpec] = [
         model=os.getenv("DOUBAO_MODEL", "doubao-seed-1-6-250615"),
         base_url="https://ark.cn-beijing.volces.com/api/v3",
         api_key_env="DOUBAO_API_KEY",
+        vision=True,  # doubao-seed-1.6 accepts image input
     ),
     # --- Kimi / Moonshot — OpenAI-compatible ---------------------------------
     ModelSpec(
@@ -182,6 +192,7 @@ MODEL_REGISTRY: list[ModelSpec] = [
         base_url="https://openrouter.ai/api/v1",
         api_key_env="OPENROUTER_API_KEY",
         free=True,
+        vision=True,  # Gemma -it multimodal variants accept images
     ),
     # --- Generic OpenAI-compatible (OpenAI / Groq / local / custom) ----------
     # Driven by the classic OPENAI_* vars, so existing setups keep working.
@@ -192,6 +203,7 @@ MODEL_REGISTRY: list[ModelSpec] = [
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         api_key_env="OPENAI_API_KEY",
+        vision=True,  # gpt-4o / 4o-mini are vision-capable
     ),
     # --- Anthropic (Claude) — premium option ---------------------------------
     ModelSpec(
@@ -200,6 +212,7 @@ MODEL_REGISTRY: list[ModelSpec] = [
         transport="anthropic",
         model=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
         api_key_env="ANTHROPIC_API_KEY",
+        vision=True,  # Claude 3.5 Sonnet accepts images
     ),
 ]
 
@@ -266,6 +279,7 @@ def build_byok_spec(
         model=(model or "").strip(),
         base_url=(base_url or "").strip().rstrip("/"),
         byok=True,
+        vision=True,  # user-chosen model; let their provider judge the images
         inline_key=(api_key or "").strip(),
     )
 

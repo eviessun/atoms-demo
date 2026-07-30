@@ -34,6 +34,11 @@ const codeScroller = codeContent.parentElement;   // the scrollable <pre>
 // File strip above the composer
 const fileStrip = document.getElementById("file-strip");
 const fileChip = document.getElementById("file-chip");
+// Composer multimodal tools: image attach + voice input
+const attachStrip = document.getElementById("attach-strip");
+const attachBtn = document.getElementById("attach-btn");
+const imageInput = document.getElementById("image-input");
+const micBtn = document.getElementById("mic-btn");
 // BYOK dialog elements
 const byokGear = document.getElementById("byok-gear");
 const byokOverlay = document.getElementById("byok-overlay");
@@ -80,12 +85,34 @@ function newIdemKey() {
   return `idem-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function addMessage(role, text) {
+// Staged image attachments (base64 data URLs) for the next generate request.
+// Sent only when the selected model is vision-capable; cleared after each send.
+let attachedImages = [];
+// Images locked in for the in-flight request. Set at submit (snapshot of
+// attachedImages) so composeBody sends them even though the staging strip is
+// cleared immediately; survives a stream->blocking fallback. Cleared in finally.
+let pendingImages = [];
+const MAX_IMAGES = 4;              // mirror the server cap (main.MAX_IMAGES)
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;   // ~5MB source; server caps the base64
+
+function addMessage(role, text, images) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   const p = document.createElement("p");
   p.textContent = text;
   div.appendChild(p);
+  // Echo any attached images as small thumbnails under the user's message.
+  if (images && images.length) {
+    const strip = document.createElement("div");
+    strip.className = "msg-images";
+    for (const src of images) {
+      const img = document.createElement("img");
+      img.src = src;
+      img.alt = "";
+      strip.appendChild(img);
+    }
+    div.appendChild(strip);
+  }
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -402,6 +429,15 @@ function selectedModelId() {
   return modelSelect.value || null;
 }
 
+// Whether the currently selected model accepts image input (from /api/models
+// `vision`). Drives the attach button's enabled state so users can't stage
+// images for a text-only model.
+function selectedModelVision() {
+  const id = selectedModelId();
+  const m = availableModels.find((x) => x.id === id);
+  return !!(m && m.vision);
+}
+
 function renderModelOptions() {
   const remembered = localStorage.getItem(MODEL_STORE_KEY);
   modelSelect.innerHTML = "";
@@ -428,11 +464,145 @@ async function loadModels() {
     const ids = availableModels.map((m) => m.id);
     if (ids.includes(data.default)) modelSelect.value = data.default;
   }
+  syncAttachButton();   // enable/disable image attach for the resolved model
 }
 
 modelSelect.addEventListener("change", () => {
   localStorage.setItem(MODEL_STORE_KEY, modelSelect.value);
   maybePromptByok();
+  syncAttachButton();
+});
+
+// --- multimodal input: image attachments + voice ------------------------
+// Images are staged locally as base64 data URLs and sent with the next
+// generate request (only to vision-capable models). Voice uses the browser's
+// Web Speech API to transcribe straight into the textarea — no server round
+// trip, no key.
+
+// Enable the attach button only when the selected model accepts images; when a
+// text-only model is picked, disable it and drop anything already staged so we
+// never send images the model would choke on.
+function syncAttachButton() {
+  const vision = selectedModelVision();
+  attachBtn.disabled = !vision;
+  attachBtn.title = i18n.t(vision ? "app.attach_image" : "app.attach_image_disabled");
+  if (!vision && attachedImages.length) {
+    attachedImages = [];
+    renderAttachments();
+  }
+}
+
+function renderAttachments() {
+  attachStrip.innerHTML = "";
+  attachedImages.forEach((src, idx) => {
+    const thumb = document.createElement("div");
+    thumb.className = "attach-thumb";
+    const img = document.createElement("img");
+    img.src = src;
+    img.alt = "";
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "attach-remove";
+    rm.textContent = "✕";
+    rm.title = i18n.t("app.attach_remove");
+    rm.addEventListener("click", () => {
+      attachedImages.splice(idx, 1);
+      renderAttachments();
+    });
+    thumb.append(img, rm);
+    attachStrip.appendChild(thumb);
+  });
+  attachStrip.classList.toggle("hidden", attachedImages.length === 0);
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function stageImages(fileList) {
+  const files = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
+  for (const file of files) {
+    if (attachedImages.length >= MAX_IMAGES) {
+      addMessage("assistant", i18n.t("msg.image_limit", { max: MAX_IMAGES }));
+      break;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      addMessage("assistant", i18n.t("msg.image_too_big", { name: file.name }));
+      continue;
+    }
+    try {
+      attachedImages.push(await readFileAsDataURL(file));
+    } catch {
+      addMessage("assistant", i18n.t("msg.image_read_fail", { name: file.name }));
+    }
+  }
+  renderAttachments();
+}
+
+attachBtn.addEventListener("click", () => { if (!attachBtn.disabled) imageInput.click(); });
+imageInput.addEventListener("change", () => {
+  stageImages(imageInput.files);
+  imageInput.value = "";   // allow re-picking the same file
+});
+// Paste an image straight into the composer (common flow for screenshots).
+promptEl.addEventListener("paste", (e) => {
+  if (attachBtn.disabled) return;
+  const items = Array.from(e.clipboardData?.items || []);
+  const files = items.filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+                     .map((it) => it.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); stageImages(files); }
+});
+
+// --- voice input (Web Speech API) ---------------------------------------
+// Transcribes speech into the textarea. Supported mainly in Chrome/Edge; when
+// unavailable we hide the mic button entirely rather than show a dead control.
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let listening = false;
+
+function setupVoice() {
+  if (!SpeechRecognition) {
+    micBtn.classList.add("hidden");   // no support -> no button
+    return;
+  }
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  // Match the UI language so recognition picks the right model.
+  recognition.lang = i18n.getLang() === "zh" ? "zh-CN" : "en-US";
+
+  recognition.addEventListener("result", (e) => {
+    const text = Array.from(e.results).map((r) => r[0].transcript).join("");
+    if (!text) return;
+    // Append to whatever is already typed, with a space if needed.
+    const sep = promptEl.value && !promptEl.value.endsWith(" ") ? " " : "";
+    promptEl.value = promptEl.value + sep + text;
+    promptEl.focus();
+  });
+  const stop = () => { listening = false; micBtn.classList.remove("listening"); };
+  recognition.addEventListener("end", stop);
+  recognition.addEventListener("error", (e) => {
+    stop();
+    if (e.error !== "aborted" && e.error !== "no-speech") {
+      addMessage("assistant", i18n.t("msg.voice_error"));
+    }
+  });
+}
+
+micBtn.addEventListener("click", () => {
+  if (!recognition) return;
+  if (listening) { recognition.stop(); return; }
+  recognition.lang = i18n.getLang() === "zh" ? "zh-CN" : "en-US";
+  try {
+    recognition.start();
+    listening = true;
+    micBtn.classList.add("listening");
+  } catch { /* start() throws if already started; ignore */ }
 });
 
 // --- BYOK (bring your own key) ------------------------------------------
@@ -571,6 +741,12 @@ function composeBody(prompt, editing) {
     // Create: carry the idempotency key so a retry/replay of this one request
     // resolves to the same project instead of forking a duplicate.
     body.idempotency_key = createIdemKey;
+  }
+  // Attach images locked in for this request only for vision-capable models.
+  // The server also drops them for text-only specs, but gating here saves
+  // bandwidth on the round trip.
+  if (pendingImages.length && selectedModelVision()) {
+    body.images = pendingImages.slice();
   }
   return body;
 }
@@ -789,13 +965,21 @@ composer.addEventListener("submit", async (e) => {
   // so they don't need one). Kept stable across a stream->blocking fallback so
   // that retry still maps to the same project server-side.
   createIdemKey = currentHtml == null ? newIdemKey() : null;
-  addMessage("user", prompt);
+  // Lock in the images for this request (vision models only), echo them in the
+  // user's message, then clear the staging strip. pendingImages survives a
+  // stream->blocking fallback and is cleared in finally.
+  pendingImages = (attachedImages.length && selectedModelVision())
+    ? attachedImages.slice() : [];
+  addMessage("user", prompt, pendingImages);
   promptEl.value = "";
+  attachedImages = [];
+  renderAttachments();
   try {
     await generateStream(prompt);
   } finally {
     generating = false;
     createIdemKey = null;
+    pendingImages = [];
   }
 });
 
@@ -995,12 +1179,17 @@ window.addEventListener("langchange", () => {
   renderProjects(lastProjects);
   renderModelOptions();
   renderMode();
+  syncAttachButton();   // refresh the attach tooltip in the new language
+  if (recognition) {    // keep voice recognition in sync with the UI language
+    recognition.lang = i18n.getLang() === "zh" ? "zh-CN" : "en-US";
+  }
   statusEl.textContent = i18n.t(statusKey);
 });
 
 // init
 (async function init() {
   renderMode();
+  setupVoice();
   await loadModels();
   await loadByokPresets();
   await loadMe();

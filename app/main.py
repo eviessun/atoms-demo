@@ -30,6 +30,30 @@ app = FastAPI(title=settings.APP_NAME)
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# Multimodal input limits. Images ride inside the JSON body as base64 data URLs,
+# so we cap count and per-image size to keep request bodies (and provider bills)
+# sane. ~7MB of base64 ≈ a ~5MB source image.
+MAX_IMAGES = 4
+MAX_IMAGE_CHARS = 7_000_000
+DATA_URL_RE = re.compile(r"^data:image/[a-zA-Z0-9.+-]+;base64,")
+
+
+def _sanitize_images(images) -> list[str]:
+    """Keep only well-formed image data URLs, within the count/size caps. Bad or
+    oversized entries are dropped silently rather than failing the request."""
+    if not images:
+        return []
+    clean: list[str] = []
+    for item in images:
+        if not isinstance(item, str):
+            continue
+        s = item.strip()
+        if DATA_URL_RE.match(s) and len(s) <= MAX_IMAGE_CHARS:
+            clean.append(s)
+        if len(clean) >= MAX_IMAGES:
+            break
+    return clean
+
 
 @app.on_event("startup")
 def _startup() -> None:
@@ -55,6 +79,10 @@ class GenerateRequest(BaseModel):
     #  - base_html: for guests (no saved project) — the current app HTML to edit.
     project_id: int | None = None
     base_html: str | None = None
+    # Multimodal input: image attachments as base64 data URLs
+    # ("data:image/png;base64,..."). Only forwarded to vision-capable models
+    # (see llm._generate_with_spec); ignored otherwise. Capped in _resolve_generate.
+    images: list[str] | None = None
     # Idempotency: a client-generated key that ties all retries of ONE create
     # action together. Two requests with the same key (a double-submit, a retry
     # after a dropped response) resolve to the same project instead of forking a
@@ -88,7 +116,7 @@ def models():
     return {
         "models": [
             {"id": m.id, "label": m.label, "free": m.free,
-             "transport": m.transport, "byok": m.byok}
+             "transport": m.transport, "byok": m.byok, "vision": m.vision}
             for m in available_models()
         ],
         "default": settings.default_model_id(),
@@ -170,10 +198,10 @@ class _Resolved:
     it's None the other fields are ready to feed the model + persistence."""
 
     __slots__ = ("error", "prompt", "user", "base_html", "target_project", "byok_spec",
-                 "idempotency_key")
+                 "idempotency_key", "images")
 
     def __init__(self, error=None, prompt="", user=None, base_html=None,
-                 target_project=None, byok_spec=None, idempotency_key=None):
+                 target_project=None, byok_spec=None, idempotency_key=None, images=None):
         self.error = error
         self.prompt = prompt
         self.user = user
@@ -181,6 +209,7 @@ class _Resolved:
         self.target_project = target_project
         self.byok_spec = byok_spec
         self.idempotency_key = idempotency_key
+        self.images = images
 
 
 def _resolve_generate(req: "GenerateRequest", request: Request) -> _Resolved:
@@ -226,7 +255,8 @@ def _resolve_generate(req: "GenerateRequest", request: Request) -> _Resolved:
 
     return _Resolved(prompt=prompt, user=user, base_html=base_html,
                      target_project=target_project, byok_spec=byok_spec,
-                     idempotency_key=(req.idempotency_key or "").strip() or None)
+                     idempotency_key=(req.idempotency_key or "").strip() or None,
+                     images=_sanitize_images(req.images))
 
 
 def _persist_generation(r: _Resolved, html: str, provider: str) -> tuple[int | None, bool]:
@@ -265,7 +295,7 @@ def generate(req: GenerateRequest, request: Request):
 
     try:
         html, used_provider = generate_app_html(
-            r.prompt, r.base_html, model_id=req.model, spec=r.byok_spec
+            r.prompt, r.base_html, model_id=req.model, spec=r.byok_spec, images=r.images
         )
     except Exception as exc:  # noqa: BLE001 — surface upstream errors to the UI
         return JSONResponse(status_code=502, content={"error": f"generation failed: {exc}"})
@@ -307,7 +337,7 @@ def generate_stream(req: GenerateRequest, request: Request):
         provider_label = ""
         try:
             for kind, payload in stream_app_html(
-                r.prompt, r.base_html, model_id=req.model, spec=r.byok_spec
+                r.prompt, r.base_html, model_id=req.model, spec=r.byok_spec, images=r.images
             ):
                 if kind == "model":
                     provider_label = payload

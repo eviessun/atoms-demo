@@ -70,8 +70,23 @@
         </button>
       </div>
       <form class="composer" id="composer">
+        <!-- Attached image thumbnails (base64 previews), shown only when images
+             are staged. Each chip has a remove (✕) button. -->
+        <div class="attach-strip hidden" id="attach-strip"></div>
         <textarea id="prompt" rows="3" data-i18n-placeholder="app.prompt_ph" placeholder="描述你想要的应用…"></textarea>
-        <button type="submit" id="send" data-i18n="app.generate">生成</button>
+        <div class="composer-actions">
+          <!-- Attach image: enabled only for vision-capable models (JS toggles
+               the disabled state + tooltip from /api/models `vision`). -->
+          <button type="button" class="composer-tool" id="attach-btn"
+                  data-i18n-tooltip="app.attach_image" title="添加图片">🖼️</button>
+          <!-- Voice input: browser Web Speech API transcribes into the textarea.
+               Hidden entirely when the browser doesn't support it. -->
+          <button type="button" class="composer-tool" id="mic-btn"
+                  data-i18n-tooltip="app.voice_input" title="语音输入">🎤</button>
+          <input type="file" id="image-input" accept="image/*" multiple hidden />
+          <span class="composer-spacer"></span>
+          <button type="submit" id="send" data-i18n="app.generate">生成</button>
+        </div>
       </form>
     </section>
 

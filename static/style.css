@@ -393,6 +393,12 @@ body.resizing-v iframe { pointer-events: none; }
 .msg p:last-child { margin-bottom: 0; }
 .msg.assistant { background: var(--tint); border: 1px solid var(--tint-border); }
 .msg.user { background: var(--accent); color: var(--accent-ink); align-self: flex-end; max-width: 90%; }
+/* Image thumbnails echoed under a user message that carried attachments. */
+.msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.msg-images img {
+  width: 64px; height: 64px; object-fit: cover;
+  border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.4);
+}
 .hint { color: var(--muted); font-size: 0.82rem; }
 
 /* --- streaming message (live reasoning + code) ------------------------- */
@@ -474,13 +480,79 @@ body.resizing-v iframe { pointer-events: none; }
 
 
 .composer {
-  --composer-h: 132px;
+  --composer-h: 160px;
   height: var(--composer-h);
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* Composer bottom action row: image/voice tools on the left, send on the right */
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.composer-spacer { flex: 1; }
+
+/* Tool buttons (attach image / mic) — subtle, square, distinct from Send */
+.composer-tool {
+  background: var(--tint);
+  color: var(--text);
+  border: 1px solid var(--tint-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.composer-tool:hover:not(:disabled) { border-color: var(--accent); }
+.composer-tool:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Mic actively listening: pulse so the user knows recording is live */
+.composer-tool.listening {
+  border-color: var(--accent);
+  color: var(--accent);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.4); }
+  50% { box-shadow: 0 0 0 5px rgba(56, 189, 248, 0); }
+}
+
+/* Attached image thumbnails above the textarea */
+.attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.attach-thumb {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--tint-border);
+}
+.attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach-thumb .attach-remove {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.7rem;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
 }
 
 /* Mode banner: sits above the composer, shows new-vs-edit state */
