@@ -47,13 +47,22 @@ html, body {
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
+/* App shell is a vertical flex column: topbar (auto height) + layout (fills
+   the rest). This must NOT assume a fixed topbar height — the topbar can wrap
+   to multiple rows on narrow screens or with long email/model names. */
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;   /* panels scroll internally; the page itself never does */
+}
 
 .topbar {
-  height: 56px;
+  min-height: 56px;
+  flex-shrink: 0;     /* keep full height; never squashed by the layout below */
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 8px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
@@ -235,7 +244,8 @@ html, body {
   display: grid;
   grid-template-columns:
     var(--projects-w) var(--resizer-w) minmax(280px, 1fr) var(--resizer-w) var(--preview-w);
-  height: calc(100% - 56px);
+  flex: 1;            /* fill whatever height remains under the topbar */
+  min-height: 0;      /* critical: let the grid shrink so inner panels scroll */
 }
 
 /* Draggable dividers between panels.
