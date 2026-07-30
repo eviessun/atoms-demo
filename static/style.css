@@ -498,22 +498,25 @@ body.resizing-v iframe { pointer-events: none; }
 }
 .composer-spacer { flex: 1; }
 
-/* Tool buttons (attach image / mic) — subtle, square, distinct from Send */
+/* Tool buttons (attach image / mic) — minimal icon-only, sit inside textarea */
 .composer-tool {
-  background: var(--tint);
-  color: var(--text);
-  border: 1px solid var(--tint-border);
-  border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 1rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  border-radius: 8px;
   cursor: pointer;
 }
-.composer-tool:hover:not(:disabled) { border-color: var(--accent); }
+.composer-tool:hover:not(:disabled) { background: var(--tint); color: var(--accent); }
 .composer-tool:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Mic actively listening: pulse so the user knows recording is live */
 .composer-tool.listening {
-  border-color: var(--accent);
+  background: var(--tint);
   color: var(--accent);
   animation: mic-pulse 1.2s ease-in-out infinite;
 }
@@ -659,9 +662,16 @@ body.resizing-v iframe { pointer-events: none; }
 }
 .ghost.small:hover { border-color: var(--accent); color: var(--accent); }
 
+/* Wrap holds the textarea + in-field tool icons (image / voice) */
+.input-wrap {
+  position: relative;
+  flex: 1;             /* fill the (resizable) composer height */
+  min-height: 0;
+  display: flex;
+}
 textarea {
   width: 100%;
-  flex: 1;             /* fill the (resizable) composer height */
+  flex: 1;
   min-height: 0;
   resize: none;        /* height is driven by the drag divider above */
   background: #ffffff;
@@ -670,6 +680,18 @@ textarea {
   border-radius: 10px;
   padding: 10px;
   font: inherit;
+}
+/* In #prompt, leave room at the bottom-left for the docked tool icons */
+#prompt { padding-bottom: 44px; }
+
+/* Tool icons docked inside the textarea, bottom-left */
+.input-tools {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 button {
