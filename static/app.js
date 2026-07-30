@@ -143,6 +143,25 @@ function addMessage(role, text, images) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// An assistant bubble that ends with an inline "Log in / Register" link. Used to
+// nudge guests to the login page up front (e.g. after they open a featured app
+// but need an account to remix it), instead of letting them hit the login gate
+// on the first keystroke.
+function addLoginPrompt(text) {
+  const div = document.createElement("div");
+  div.className = "msg assistant";
+  const p = document.createElement("p");
+  p.textContent = text + " ";
+  const link = document.createElement("a");
+  link.className = "inline-login";
+  link.href = "/login";
+  link.textContent = i18n.t("app.login_entry");
+  p.appendChild(link);
+  div.appendChild(p);
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 function setStatus(key) {
   statusKey = key;
   statusEl.textContent = i18n.t(key);
@@ -596,6 +615,12 @@ async function openFeatured(slug) {
   showPreviewMultiFile({ slug, entry: data.entry });
   setStatus("status.ready");
   addMessage("assistant", i18n.t("msg.featured_loaded", { title }));
+  // Remixing a featured app into your own requires an account. Nudge guests to
+  // log in up front (with an inline link) rather than letting them discover the
+  // login gate only after they start typing.
+  if (!currentUser) {
+    addLoginPrompt(i18n.t("msg.featured_login_hint"));
+  }
 }
 
 // --- version history + rollback -----------------------------------------
