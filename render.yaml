@@ -17,9 +17,11 @@ services:
         value: "3.12.7"
 
       # 首屏默认选中的模型 id（非密钥，明文写在这里没问题）。
-      # 想 0 成本可改成 openrouter-nemotron-free，但记得下面填 OPENROUTER_API_KEY。
+      # 默认走 OpenRouter 免费档 Nemotron Nano 30B（$0，实测最快最稳）。
+      # 前提：下面的 OPENROUTER_API_KEY 必须在 Render Dashboard 填上，否则该模型
+      # 不 available，会按 default_model_id() 回退到首个可用模型 / mock。
       - key: DEFAULT_MODEL_ID
-        value: mock
+        value: openrouter-nemotron-nano-free
 
       # 选中的模型报错时降级到 mock，避免线上演示硬失败。
       - key: LLM_FALLBACK_TO_MOCK
