@@ -239,7 +239,7 @@ node --test          # runs tests/js/*.test.mjs
 
 ---
 
-## Choosing a model (Trae-style dropdown)
+## Choosing a model
 
 Instead of one hard-wired provider, the app keeps a **registry** of selectable
 models (`MODEL_REGISTRY` in [app/config.py](app/config.py)). The UI shows a
@@ -290,9 +290,10 @@ one OpenAI-compatible transport.
 Both backends expose the same functions, so the rest of the app never knows which
 is active. Three tables: `users`, `sessions`, `projects`.
 
-> ⚠️ On Render's free tier the container disk is ephemeral, so SQLite data is wiped
-> on every redeploy. Set `DATABASE_URL` (Neon) in the Render dashboard for durable
-> storage.
+> The deployed Render service already has `DATABASE_URL` configured, so production
+> data is persisted in Neon PostgreSQL. The SQLite fallback is mainly for local
+> development; on Render it would only be used if `DATABASE_URL` were missing, and
+> that ephemeral file would be wiped on redeploy.
 
 ---
 

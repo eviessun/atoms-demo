@@ -239,7 +239,7 @@ node --test          # 运行 tests/js/*.test.mjs
 
 ---
 
-## 选择模型（Trae 风格下拉）
+## 选择模型
 
 不写死单一 provider，而是维护一个可选模型的**注册表**（`app/config.py` 里的
 `MODEL_REGISTRY`）。界面显示一个下拉框；**只有配置了对应 API key 环境变量的模型才会出现**
@@ -286,8 +286,9 @@ DeepSeek、豆包、Kimi、OpenRouter、OpenAI 都复用同一个 OpenAI 兼容�
 两个后端对外暴露完全相同的函数，所以业务代码不需要知道当前用的是哪个。三张表：
 `users`、`sessions`、`projects`。
 
-> ⚠️ Render 免费档容器磁盘是临时的，SQLite 数据每次重新部署都会被清空。要持久保存，
-> 请在 Render 后台配 `DATABASE_URL`（Neon）。
+> 当前线上 Render 已配置 `DATABASE_URL`，因此使用 Neon PostgreSQL 持久化保存数据。
+> 上面的 SQLite 回退主要用于本地开发；只有未配置 `DATABASE_URL` 时，Render 才会落到临时
+> SQLite 文件，重新部署后数据会被清空。
 
 ---
 
