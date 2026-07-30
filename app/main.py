@@ -12,10 +12,11 @@ Generation works with no key via the `mock` provider, so the whole pipeline
 """
 import json
 import re
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -486,14 +487,37 @@ def featured_file(slug: str, name: str):
 
 # --- frontend ------------------------------------------------------------
 
+# Cache-buster for /static/*.{js,css} refs inside our two HTML pages. Stamped
+# once per process (i.e. per Render deploy), so a shipped script/style change
+# forces the browser to fetch the new file on the next hit — otherwise a stale
+# cached script that still references a since-removed DOM id throws on init
+# and takes the whole page down.
+_STATIC_REF_RE = re.compile(r'(/static/[^"\'\s?]+\.(?:js|css))')
+_ASSET_VERSION = str(int(time.time()))
+
+
+def _stamp_asset_refs(html: str) -> str:
+    return _STATIC_REF_RE.sub(lambda m: f"{m.group(1)}?v={_ASSET_VERSION}", html)
+
+
+def _render_page(path: Path) -> HTMLResponse:
+    body = _stamp_asset_refs(path.read_text(encoding="utf-8"))
+    # Never let the shell HTML be cached itself — the stamped asset URLs inside
+    # it are the cache key, so the outer document must always be re-fetched.
+    return HTMLResponse(
+        body,
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return _render_page(STATIC_DIR / "index.html")
 
 
 @app.get("/login")
 def login_page():
-    return FileResponse(STATIC_DIR / "login.html")
+    return _render_page(STATIC_DIR / "login.html")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
