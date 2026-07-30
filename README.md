@@ -249,6 +249,11 @@ fallback but never shown as a choice. API keys never leave the server — the
 browser sends only a model `id` (e.g. `deepseek-chat`), and the key for that id
 is read from the environment on the server.
 
+> Note for reviewers: the public demo is intentionally wired to the **free / low-cost**
+> models in the shared environment, so output quality may be less stable than a
+> paid frontier model. If you are doing a serious acceptance pass, you can also
+> use **BYOK** and point the app at your own paid model for a stronger baseline.
+
 Copy `.env.example` (or `.env.multi-model.example`) to `.env` and fill in only the
 providers you want:
 

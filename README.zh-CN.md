@@ -247,6 +247,9 @@ node --test          # 运行 tests/js/*.test.mjs
 出现在下拉里。API key 永远不出服务端 —— 浏览器只发送 model `id`
 （如 `deepseek-chat`），服务端再根据 id 读取对应的 key。
 
+> 验收说明：线上 demo 当前默认接的是共享环境里的**免费 / 低成本模型**，所以生成效果可能不如付费模型稳定。
+> 如果你要认真验收模型效果，也可以直接使用 **BYOK**，切到你自己的付费模型作为对比基线。
+
 把 `.env.example`（或 `.env.multi-model.example`）复制成 `.env`，只填你要用的：
 
 ```bash
