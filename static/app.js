@@ -54,6 +54,10 @@ const byokX = document.getElementById("byok-x");
 const byokClear = document.getElementById("byok-clear");
 
 let currentUser = null;
+// Becomes true once /api/auth/me resolves. Guards the "guests must log in to
+// compose" redirect so we never bounce a real logged-in user during the brief
+// window before their session is confirmed on page load.
+let authReady = false;
 let lastProjects = [];       // cache so we can re-render on language change
 let statusKey = "status.idle";
 let availableModels = [];    // [{id,label,free,transport,byok}] from /api/models
@@ -257,7 +261,40 @@ async function logout() {
 async function loadMe() {
   const { data } = await api("/api/auth/me");
   currentUser = data.user;
+  authReady = true;
   renderAuth();
+}
+
+// Composing is a logged-in action. If a guest tries to type into / attach to /
+// submit the composer, stash their draft and send them to the login page; the
+// draft is restored when they come back logged in (see restoreDraft in init).
+// Returns true when it redirects, so callers can bail out of their own work.
+// `pendingText` is the not-yet-committed input (e.g. a beforeinput char or the
+// pasted text) — folded into the draft since it hasn't landed in the value yet.
+const DRAFT_KEY = "atoms:draft";
+function requireLogin(pendingText) {
+  // Don't act until /api/auth/me has resolved — otherwise we could bounce a
+  // real logged-in user during the brief confirmation window on page load.
+  if (!authReady || currentUser) return false;
+  try { sessionStorage.setItem(DRAFT_KEY, promptEl.value + (pendingText || "")); }
+  catch { /* private mode / storage full: skip persisting the draft */ }
+  window.location.href = "/login";
+  return true;
+}
+
+// On return from a successful login, put the guest's stashed draft back into
+// the composer so they don't have to retype it. Cleared either way (a stale
+// draft from a guest who never logged in shouldn't linger).
+function restoreDraft() {
+  let draft = null;
+  try {
+    draft = sessionStorage.getItem(DRAFT_KEY);
+    sessionStorage.removeItem(DRAFT_KEY);
+  } catch { /* storage unavailable: nothing to restore */ }
+  if (draft && currentUser && !promptEl.value) {
+    promptEl.value = draft;
+    promptEl.focus();
+  }
 }
 
 // --- projects ------------------------------------------------------------
@@ -550,13 +587,24 @@ async function stageImages(fileList) {
   renderAttachments();
 }
 
-attachBtn.addEventListener("click", () => { if (!attachBtn.disabled) imageInput.click(); });
+attachBtn.addEventListener("click", () => {
+  if (requireLogin()) return;
+  if (!attachBtn.disabled) imageInput.click();
+});
 imageInput.addEventListener("change", () => {
   stageImages(imageInput.files);
   imageInput.value = "";   // allow re-picking the same file
 });
+// The moment a guest tries to put content into the composer (type / paste /
+// IME commit), send them to log in first — before the character even lands.
+// beforeinput (not focus) is used so the several programmatic promptEl.focus()
+// calls never trip the redirect for a logged-in user.
+promptEl.addEventListener("beforeinput", (e) => {
+  if (requireLogin(e.data)) e.preventDefault();
+});
 // Paste an image straight into the composer (common flow for screenshots).
 promptEl.addEventListener("paste", (e) => {
+  if (requireLogin(e.clipboardData?.getData("text"))) { e.preventDefault(); return; }
   if (attachBtn.disabled) return;
   const items = Array.from(e.clipboardData?.items || []);
   const files = items.filter((it) => it.kind === "file" && it.type.startsWith("image/"))
@@ -601,6 +649,7 @@ function setupVoice() {
 }
 
 micBtn.addEventListener("click", () => {
+  if (requireLogin()) return;
   if (!recognition) return;
   if (listening) { recognition.stop(); return; }
   recognition.lang = i18n.getLang() === "zh" ? "zh-CN" : "en-US";
@@ -959,6 +1008,8 @@ async function generateStream(prompt) {
 
 composer.addEventListener("submit", async (e) => {
   e.preventDefault();
+  // Guests can't compose — send them to log in (draft is stashed + restored).
+  if (requireLogin()) return;
   // Ignore re-entrant submits while a generation is in flight. Set the flag
   // synchronously here (before any await) so a fast second click can't race the
   // first into creating a duplicate project. It's cleared in finally once the
@@ -1199,5 +1250,6 @@ window.addEventListener("langchange", () => {
   await loadModels();
   await loadByokPresets();
   await loadMe();
+  restoreDraft();   // bring back a guest's stashed draft after they logged in
   await loadProjects();
 })();
