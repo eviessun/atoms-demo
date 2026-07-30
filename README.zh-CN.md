@@ -22,6 +22,7 @@ Atoms / v0 / bolt.new。
 | **数据持久化** | 账号 + 生成的项目存入 **PostgreSQL（Neon）**，跨重启/重新部署不丢；本地自动回退 SQLite |
 | **公网链接** | 部署在 Render（免费档）：https://atoms-demo-lted.onrender.com |
 | **多模型、密钥安全** | Trae 风格的模型下拉；API key 只留在服务端，浏览器只发送 model id |
+| **多模态输入** | 可附带图片（仅 vision 模型，前后端双重门控）+ 浏览器 Web Speech API 语音转文字 |
 | **中英文界面** | 全站一键 中 / EN 切换，选择被记住 |
 | **零 key 可跑** | keyless `mock` 模型 + 出错优雅回退，线上演示永不硬失败 |
 
@@ -94,13 +95,14 @@ atoms-demo/
 ├─ static/
 │  ├─ index.html    # 主应用（项目 · 对话 · 预览），带 i18n 标记
 │  ├─ login.html    # 独立登录/注册页（tab 切换、密码显隐）
-│  ├─ app.js        # 主界面逻辑（生成、迭代、项目列表、模型选择）
+│  ├─ app.js        # 主界面逻辑（生成、迭代、项目列表、模型选择、图片/语音输入）
 │  ├─ login.js      # 登录页逻辑
 │  ├─ i18n.js       # 中/英词典 + 运行时翻译（登录页与主页共用）
 │  └─ style.css / login.css
 ├─ scripts/
 │  └─ test_db_backend.py   # 数据库后端端到端自检（users/sessions/projects）
-├─ tests/           # pytest 测试套件：认证 · 生成 · 权限隔离 · 版本 · 幂等
+├─ tests/           # pytest 测试套件：认证 · 生成 · 权限隔离 · 版本 · 幂等 · 图片
+│  └─ js/           # 零依赖前端测试（node --test）：图片上传 · 语音 · 预览
 ├─ .github/workflows/keep-alive.yml   # 定时 ping /api/health 保活免费实例
 ├─ render.yaml      # Render 蓝图（Python 3.12、环境变量、健康检查）
 ├─ .python-version  # 3.12.7 —— 规避 Render 用 Python 3.14 导致的 wheel/编译问题
@@ -236,12 +238,12 @@ DeepSeek、豆包、Kimi、OpenRouter、OpenAI 都复用同一个 OpenAI 兼容�
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/api/health` | 存活探针 + 默认模型 id |
-| GET | `/api/models` | 可选模型列表（只有 id + label，绝不含 key） |
+| GET | `/api/models` | 可选模型列表（id、label、`vision` 标记，绝不含 key） |
 | POST | `/api/auth/register` | 邮箱 + 密码注册，下发会话 cookie |
 | POST | `/api/auth/login` | 登录，下发会话 cookie |
 | POST | `/api/auth/logout` | 退出登录 |
 | GET | `/api/auth/me` | 当前用户（或 null） |
-| POST | `/api/generate` | 生成新应用，或在已有应用上迭代（`project_id` / `base_html`）；新建按可选 `idempotency_key` 去重 |
+| POST | `/api/generate` | 生成新应用，或在已有应用上迭代（`project_id` / `base_html`）；可选 `images` 给 vision 模型；新建按可选 `idempotency_key` 去重 |
 | GET | `/api/projects` | 当前用户保存的应用 |
 | GET | `/api/projects/{id}` | 单个应用（限本人） |
 | GET | `/api/projects/{id}/versions` | 某项目的版本快照（最新在前，限本人） |
@@ -265,7 +267,9 @@ DeepSeek、豆包、Kimi、OpenRouter、OpenAI 都复用同一个 OpenAI 兼容�
 - [x] 每个项目的版本历史 + 非破坏性回滚
 - [x] 导出生成的应用 —— 下载 `index.html`、复制源码、新标签页打开运行
 - [x] 服务端幂等新建 —— 重试/重放不会分叉出重复项目
-- [x] pytest 测试套件 —— 认证 · 生成 · 权限隔离 · 版本 · 幂等（离线）
+- [x] 多模态输入 —— 图片附件（vision 模型）+ 语音转文字（Web Speech API）
+- [x] pytest 测试套件 —— 认证 · 生成 · 权限隔离 · 版本 · 幂等 · 图片（离线）
+- [x] 前端单元测试 —— 图片上传 · 语音 · 预览，用 `node --test`（零依赖）
 
 ## 安全说明
 

@@ -23,6 +23,7 @@ of the box with **no API key** via a keyless `mock` model.
 | **Data persistence** | Accounts + generated projects stored in **PostgreSQL (Neon)**; survives restarts/redeploys. Auto-falls back to SQLite locally |
 | **Public link** | Deployed on Render (free): https://atoms-demo-lted.onrender.com |
 | **Multi-model, key-safe** | Trae-style model dropdown; API keys stay on the server, the browser only sends a model id |
+| **Multimodal input** | Attach images (vision models only — gated on both sides) + voice-to-text via the browser's Web Speech API |
 | **Bilingual UI** | One-click 中 / EN toggle across the whole app, preference remembered |
 | **Runs with zero keys** | Keyless `mock` model + graceful fallback so a live demo never hard-errors |
 
@@ -100,13 +101,14 @@ atoms-demo/
 ├─ static/
 │  ├─ index.html    # main app (projects · chat · preview), i18n-tagged
 │  ├─ login.html    # dedicated login/register page (tabbed, password reveal)
-│  ├─ app.js        # main UI logic (generate, iterate, projects, model picker)
+│  ├─ app.js        # main UI logic (generate, iterate, projects, model picker, image/voice input)
 │  ├─ login.js      # login page logic
 │  ├─ i18n.js       # zh/en dictionary + runtime translation (shared)
 │  └─ style.css / login.css
 ├─ scripts/
 │  └─ test_db_backend.py   # end-to-end DB backend check (users/sessions/projects)
-├─ tests/           # pytest suite: auth · generate · ownership · versions · idempotency
+├─ tests/           # pytest suite: auth · generate · ownership · versions · idempotency · images
+│  └─ js/           # zero-dependency frontend tests (node --test): image upload · voice · preview
 ├─ .github/workflows/keep-alive.yml   # pings /api/health so the free instance stays awake
 ├─ render.yaml      # Render blueprint (Python 3.12, env vars, health check)
 ├─ .python-version  # 3.12.7 — avoids Python 3.14 wheel/compile issues on Render
@@ -250,12 +252,12 @@ This repo ships `render.yaml`, so it deploys as a web service on the free tier.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/health` | Liveness + default model id |
-| GET | `/api/models` | Selectable models (ids + labels only — never keys) |
+| GET | `/api/models` | Selectable models (ids, labels, `vision` flag — never keys) |
 | POST | `/api/auth/register` | email + password → sets session cookie |
 | POST | `/api/auth/login` | login → sets session cookie |
 | POST | `/api/auth/logout` | clears session |
 | GET | `/api/auth/me` | current user (or null) |
-| POST | `/api/generate` | build a new app, or iterate on one (`project_id` / `base_html`); create dedupes on optional `idempotency_key` |
+| POST | `/api/generate` | build a new app, or iterate on one (`project_id` / `base_html`); optional `images` for vision models; create dedupes on optional `idempotency_key` |
 | GET | `/api/projects` | current user's saved apps |
 | GET | `/api/projects/{id}` | one saved app (owner-scoped) |
 | GET | `/api/projects/{id}/versions` | a project's version snapshots (newest first, owner-scoped) |
@@ -279,7 +281,9 @@ See [DESIGN.md](./DESIGN.md) for request/response shapes and design rationale.
 - [x] Version history per project + non-destructive rollback
 - [x] Export the generated app — download `index.html`, copy source, open in a new tab
 - [x] Server-side idempotent create — a retry/replay can't fork a duplicate project
-- [x] pytest suite — auth · generate · ownership · versions · idempotency (offline)
+- [x] Multimodal input — image attachments (vision models) + voice-to-text (Web Speech API)
+- [x] pytest suite — auth · generate · ownership · versions · idempotency · images (offline)
+- [x] Frontend unit tests — image upload · voice · preview via `node --test` (zero-dependency)
 
 ## Security notes
 

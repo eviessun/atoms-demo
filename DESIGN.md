@@ -63,8 +63,8 @@ dual backend), ③ the UI language (`i18n.js`).
 
 ### 3.1 LLM：注册表 + 可替换传输，而非写死 provider
 **中文**：不把某个模型写死，而是维护 `MODEL_REGISTRY`（`app/config.py`）。每个条目声明
-它用哪种传输（`mock` / OpenAI 兼容 / Anthropic）、base_url、模型名，以及**哪个环境变量
-存它的 key**。前端只发送 model `id`，key 永远只在服务端读取。
+它用哪种传输（`mock` / OpenAI 兼容 / Anthropic）、base_url、模型名、**哪个环境变量
+存它的 key**，以及是否 **`vision`（能否读图）**。前端只发送 model `id`，key 永远只在服务端读取。
 - **为什么**：满足"先用免费模型、以后能接 GPT/Claude"的诉求——加模型 = 加一行注册表 +
   配一个 key，其余代码不动。DeepSeek/豆包/Kimi/OpenRouter/OpenAI 都是 OpenAI 兼容，复用同一段传输代码。
 - **安全**：API key 不下发到浏览器，避免前端泄露。
@@ -73,8 +73,8 @@ dual backend), ③ the UI language (`i18n.js`).
 
 **English**: Rather than hard-wiring one model, we keep a `MODEL_REGISTRY`. Each
 entry declares its transport (`mock` / OpenAI-compatible / Anthropic), base_url,
-model name, and **which env var holds its key**. The browser sends only a model
-`id`; keys are read server-side.
+model name, **which env var holds its key**, and whether it's **`vision` (image-capable)**.
+The browser sends only a model `id`; keys are read server-side.
 - **Why**: satisfies "use a free model now, plug in GPT/Claude later" — adding a
   model is one registry row + one env var. DeepSeek/Doubao/Kimi/OpenRouter/OpenAI
   are all OpenAI-compatible and share one transport.
@@ -162,6 +162,36 @@ Chinese is the default. The toggle **shows the current language** (`🌐 中` / 
 with a hover tooltip, so users can tell the current language at a glance and know
 it's switchable.
 
+### 3.8 多模态输入：图片上传 + 语音转写
+**中文**：输入框除文本外还支持**图片**与**语音**。
+- **图片**：以 base64 data URL 装进 JSON body（不引入 multipart 依赖），随生成请求发送。
+  两侧双重门控——前端按所选模型的 `vision` 能力**置灰上传按钮**并清空已选图片，服务端也会
+  为非 vision 模型**丢弃图片**，防止陈旧的客户端选择把图片发给纯文本模型。`llm.py` 按传输
+  类型构造多模态消息（OpenAI 的 `image_url` 列表 / Anthropic 的 base64 `source` 块）。
+  `main.py` 对图片做清洗：只收合法的 `data:image/...;base64,` URL，限张数（`MAX_IMAGES`）与大小。
+- **语音**：走浏览器 **Web Speech API**（`SpeechRecognition`）在前端直接转写进输入框——
+  **零后端、零成本、零 key**。识别语言随 i18n（`zh-CN` / `en-US`）。浏览器不支持时（如
+  Safari/Firefox 支持有限）**直接隐藏麦克风按钮**，而不是留一个坏控件。
+- **为什么这么切**：图片只对确认支持识图的模型开放（豆包 / Gemma / GPT-4o / Claude / BYOK），
+  其余保守标为纯文本；语音选浏览器原生方案，避免为一个辅助输入引入服务端转写成本与依赖。
+
+**English**: Beyond text, the composer accepts **images** and **voice**.
+- **Images** ride the generate request as base64 data URLs inside the JSON body
+  (no multipart dependency). Vision is gated on **both** sides: the frontend greys
+  out the attach button (and drops staged images) based on the selected model's
+  `vision` flag, and the server **also drops images** for a non-vision spec so a
+  stale client pick can't send images to a text-only model. `llm.py` builds the
+  provider-specific multimodal message (OpenAI's `image_url` list / Anthropic's
+  base64 `source` blocks); `main.py` sanitizes input to well-formed
+  `data:image/...;base64,` URLs, capped by count (`MAX_IMAGES`) and size.
+- **Voice** uses the browser's **Web Speech API** (`SpeechRecognition`) to
+  transcribe straight into the textarea — **no backend, no cost, no key**. The
+  recognition language tracks i18n (`zh-CN` / `en-US`). When unsupported (limited
+  in Safari/Firefox) the mic button is **hidden** rather than shown as a dead control.
+- **Why**: images are opened only to models confirmed to read them (Doubao / Gemma /
+  GPT-4o / Claude / BYOK), the rest stay conservatively text-only; voice picks the
+  native browser path to avoid server-side transcription cost/deps for an input aid.
+
 ---
 
 ## 4. 数据模型 / Data model
@@ -194,7 +224,8 @@ model (iteration overwrites them; the list shows the most recent state). All
   "prompt": "一个番茄钟",      // required
   "model": "deepseek-chat",    // optional; 缺省用服务端默认模型
   "project_id": 12,            // optional; 登录用户在此项目上原地迭代
-  "base_html": "<!doctype..."  // optional; 游客迭代用的当前 HTML
+  "base_html": "<!doctype...", // optional; 游客迭代用的当前 HTML
+  "images": ["data:image/png;base64,..."]  // optional; 仅对 vision 模型生效，非 vision 服务端丢弃
 }
 ```
 response:
@@ -210,12 +241,13 @@ response:
 **`GET /api/models`** — response（**绝不含 key**）:
 ```jsonc
 { "models": [ { "id": "openrouter-nemotron-nano-free", "label": "Nemotron 3 Nano 30B",
-                "free": true, "transport": "openai", "byok": false } ],
+                "free": true, "transport": "openai", "byok": false, "vision": false } ],
   "default": "openrouter-nemotron-nano-free" }
 ```
 注：只列**已配置 key** 的模型 + 常驻的 `byok`；keyless 的 `mock` 被标记 `hidden`，
 不在下拉里出现，但仍作为服务端兜底/降级目标存在。`default` 也不会落在 `mock` 上——
-一旦有真实模型可用，就自动选中第一个（见 `default_model_id()`）。
+一旦有真实模型可用，就自动选中第一个（见 `default_model_id()`）。`vision=true` 的模型才
+接受图片，前端据此置灰上传按钮、服务端据此丢弃图片。
 
 **中文**：错误以 `{"error": "..."}` + 恰当 HTTP 码返回（400 参数、401 未登录、404 找不到/
 越权、409 邮箱已注册、502 生成失败）。
