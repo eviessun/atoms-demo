@@ -432,10 +432,15 @@ def get_version(user_id: int, project_id: int, version_id: int) -> Optional[Any]
 
 def restore_version(user_id: int, project_id: int, version_id: int) -> Optional[Any]:
     """Roll a project back to an earlier version. Non-destructive: we copy the
-    target snapshot's html/prompt/provider onto the current project AND append
-    it as a NEW version, so the history is never truncated (you can always roll
-    forward again). Returns the restored project row, or None if the version
-    isn't found / not owned. Runs in a single transaction."""
+    target snapshot's html/provider onto the current project AND append it as a
+    NEW version, so the history is never truncated (you can always roll forward
+    again). Returns the restored project row, or None if the version isn't found
+    / not owned. Runs in a single transaction.
+
+    Like update_project_html, this deliberately leaves `projects.prompt` (the
+    title) alone — a rollback shouldn't rename the project to "↩ restored v…".
+    That marker lives only on the appended version snapshot, so the history
+    timeline still shows the restore while the title stays the original."""
     with get_conn() as conn:
         target = _fetchone(
             conn,
@@ -449,18 +454,18 @@ def restore_version(user_id: int, project_id: int, version_id: int) -> Optional[
         )
         if target is None:
             return None
-        prompt = f"↩ restored v{version_id}: {target['prompt']}"
+        snapshot_prompt = f"↩ restored v{version_id}: {target['prompt']}"
         html, provider = target["html"], target["provider"]
         _execute(
             conn,
-            "UPDATE projects SET prompt = ?, html = ?, provider = ? "
+            "UPDATE projects SET html = ?, provider = ? "
             "WHERE id = ? AND user_id = ?",
-            (prompt, html, provider, project_id, user_id),
+            (html, provider, project_id, user_id),
         )
         _execute(
             conn,
             "INSERT INTO project_versions (project_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
-            (project_id, prompt, html, provider),
+            (project_id, snapshot_prompt, html, provider),
         )
         return _fetchone(
             conn,

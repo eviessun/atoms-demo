@@ -50,3 +50,38 @@ def test_restore_missing_version_404s(client):
 
 def test_versions_require_login(client):
     assert client.get("/api/projects/1/versions").status_code == 401
+
+
+def test_iterate_keeps_original_title(client):
+    # The project title (projects.prompt) is the FIRST request and must not be
+    # overwritten by a later iterate — regression guard for the list/banner
+    # showing "make the button blue" instead of the app's original purpose.
+    register(client)
+    pid = generate(client, "a pomodoro timer").json()["project_id"]
+    generate(client, "make the button blue", project_id=pid)
+    generate(client, "add a dark mode toggle", project_id=pid)
+
+    # Project title stays the original first prompt...
+    assert client.get(f"/api/projects/{pid}").json()["prompt"] == "a pomodoro timer"
+    proj = next(p for p in client.get("/api/projects").json()["projects"] if p["id"] == pid)
+    assert proj["prompt"] == "a pomodoro timer"
+    # ...while each iterate is still recorded in the version history.
+    version_prompts = [v["prompt"] for v in
+                       client.get(f"/api/projects/{pid}/versions").json()["versions"]]
+    assert "make the button blue" in version_prompts
+    assert "add a dark mode toggle" in version_prompts
+
+
+def test_restore_keeps_original_title(client):
+    # A rollback must not rename the project to "↩ restored v…"; that marker
+    # belongs only on the appended version snapshot.
+    register(client)
+    pid = generate(client, "a counter app").json()["project_id"]
+    generate(client, "make it red", project_id=pid)
+    v1_id = client.get(f"/api/projects/{pid}/versions").json()["versions"][-1]["id"]
+
+    restored = client.post(f"/api/projects/{pid}/versions/{v1_id}/restore").json()
+    assert restored["prompt"] == "a counter app"          # title unchanged
+    # The restore marker is present in history, not in the title.
+    top_version = client.get(f"/api/projects/{pid}/versions").json()["versions"][0]
+    assert top_version["prompt"].startswith("↩ restored")
