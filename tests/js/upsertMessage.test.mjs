@@ -18,15 +18,19 @@ const APP_JS = join(here, "..", "..", "static", "app.js");
 
 // Extract the real upsertTaggedMessage source and evaluate it with an injected
 // `messagesEl` — no DOM lib needed, we just fake the tiny API surface the
-// function actually uses.
+// function actually uses. formatMessageTime is a same-file collaborator; we
+// inject a deterministic stub so tests don't depend on the wall clock.
 function loadUpsert() {
   const src = readFileSync(APP_JS, "utf8");
   const m = src.match(/function upsertTaggedMessage\(role, text, tag\)\s*\{\n([\s\S]*?)\n\}\n/);
   assert.ok(m, "could not locate upsertTaggedMessage(role, text, tag) in static/app.js");
-  return new Function("messagesEl", "role", "text", "tag", m[1]);
+  return new Function("messagesEl", "formatMessageTime", "role", "text", "tag", m[1]);
 }
 
-const upsert = loadUpsert();
+const upsertRaw = loadUpsert();
+let clock = 0;
+const nowStub = () => `stamp:${++clock}`;
+const upsert = (container, role, text, tag) => upsertRaw(container, nowStub, role, text, tag);
 
 // Minimal fake element: only the props the function reads/writes.
 function makeEl({ tag = null, text = "" } = {}) {
@@ -66,6 +70,7 @@ globalThis.document = {
     const el = {
       className: "",
       dataset: {},
+      title: "",
       children: [],
       _p: null,
       appendChild(child) {
@@ -91,10 +96,16 @@ test("first call appends a fresh tagged bubble", () => {
 
 test("second call with SAME tag replaces the text in place (no new bubble)", () => {
   const container = makeContainer();
+  clock = 0;
   upsert(container, "assistant", "opened A", "featured-loaded");
+  const firstStamp = container.children[0].title;
   upsert(container, "assistant", "opened B", "featured-loaded");
   assert.equal(container.children.length, 1, "should still be 1 bubble");
   assert.equal(container.children[0]._p.textContent, "opened B");
+  // The tooltip should reflect the LATEST event, not the original one — the
+  // bubble now stands for the newer "opened…" moment, so hovering it should
+  // show that time. Different stamp from the first call proves it refreshed.
+  assert.notEqual(container.children[0].title, firstStamp);
 });
 
 test("call with DIFFERENT tag appends a new bubble", () => {

@@ -124,6 +124,10 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;   // ~5MB source; server caps the base6
 function addMessage(role, text, images) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
+  // Native browser tooltip: hover a bubble for ~half a second and the OS
+  // popup shows when it appeared. Cheap, accessible, matches the format the
+  // saved-projects list uses so times are visually consistent across the app.
+  div.title = formatMessageTime();
   const p = document.createElement("p");
   p.textContent = text;
   div.appendChild(p);
@@ -151,6 +155,7 @@ function addLoginPrompt(text, { tag } = {}) {
   const div = document.createElement("div");
   div.className = "msg assistant";
   if (tag) div.dataset.tag = tag;
+  div.title = formatMessageTime();
   const p = document.createElement("p");
   p.textContent = text + " ";
   const link = document.createElement("a");
@@ -174,12 +179,17 @@ function upsertTaggedMessage(role, text, tag) {
   if (last && last.dataset && last.dataset.tag === tag) {
     const p = last.querySelector("p");
     if (p) p.textContent = text;
+    // Refresh the hover-timestamp too — the bubble now represents a fresh
+    // "opened / loaded" moment, so its tooltip should reflect that, not the
+    // time of the first (superseded) event.
+    last.title = formatMessageTime();
     messagesEl.scrollTop = messagesEl.scrollHeight;
     return;
   }
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   div.dataset.tag = tag;
+  div.title = formatMessageTime();
   const p = document.createElement("p");
   p.textContent = text;
   div.appendChild(p);
@@ -563,6 +573,14 @@ function formatBeijingTime(ts) {
   const p = (n) => String(n).padStart(2, "0");
   return `${bj.getUTCFullYear()}-${p(bj.getUTCMonth() + 1)}-${p(bj.getUTCDate())} ` +
          `${p(bj.getUTCHours())}:${p(bj.getUTCMinutes())}:${p(bj.getUTCSeconds())}`;
+}
+
+// Hover-tooltip timestamp for chat bubbles. We format the CURRENT time in the
+// Beijing (UTC+8) frame — the same frame the saved-projects list uses — so
+// times are visually consistent across the app regardless of the viewer's
+// local timezone.
+function formatMessageTime() {
+  return formatBeijingTime(new Date().toISOString());
 }
 
 function renderProjects(items) {
