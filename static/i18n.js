@@ -77,6 +77,7 @@
       "app.new_app": "＋ 新应用",
       "app.mode_new": "新建应用",
       "app.mode_edit": "正在修改：{name}",
+      "app.mode_featured": "精选预览：{name}",
       "app.mode_edit_hint": "继续输入修改要求，如“把按钮改成绿色”“加一个重置按钮”。",
       "app.prompt_ph_edit": "描述要修改的地方…",
       "app.projects": "我的项目",
@@ -88,7 +89,7 @@
       // featured showcase (public gallery)
       "app.featured": "精选作品",
       "app.featured_hint": "无需登录，点开即可预览",
-      "msg.featured_loaded": "已打开精选作品「{title}」。想改成自己的？直接在下面描述修改即可（登录后可保存为你的应用）。",
+      "msg.featured_loaded": "已打开精选作品「{title}」。这是只读预览，右侧「代码」标签里可以看 index.html / style.css / app.js 各自的源码。想改成自己的？点顶部「＋ 新应用」再描述你想要的。",
       "msg.featured_open_fail": "无法打开这个精选作品，请稍后重试。",
 
       // version history + rollback
@@ -106,7 +107,7 @@
       "app.tab_code": "代码",
       "app.files": "文件",
       "app.copy": "复制代码",
-      "app.download": "下载 index.html",
+      "app.download": "下载当前文件",
       "app.open_tab": "在新标签页打开（真机运行）",
       "msg.downloaded": "已下载 index.html —— 双击即可在浏览器打开运行。",
       "msg.copied": "已复制源码到剪贴板。",
@@ -209,6 +210,7 @@
       "app.new_app": "＋ New app",
       "app.mode_new": "New app",
       "app.mode_edit": "Editing: {name}",
+      "app.mode_featured": "Featured preview: {name}",
       "app.mode_edit_hint": "Keep typing changes, e.g. “make the button green”, “add a reset button”.",
       "app.prompt_ph_edit": "Describe what to change…",
       "app.projects": "My projects",
@@ -220,7 +222,7 @@
       // featured showcase (public gallery)
       "app.featured": "Featured",
       "app.featured_hint": "No login needed — click to preview",
-      "msg.featured_loaded": "Opened the featured app “{title}”. Want your own? Just describe a change below (log in to save it as your app).",
+      "msg.featured_loaded": "Opened the featured app “{title}”. This is a read-only preview — flip to the Code tab to browse index.html / style.css / app.js. Want your own? Hit “＋ New app” at the top and describe it.",
       "msg.featured_open_fail": "Couldn't open this featured app, please try again.",
 
       // version history + rollback
@@ -238,7 +240,7 @@
       "app.tab_code": "Code",
       "app.files": "Files",
       "app.copy": "Copy code",
-      "app.download": "Download index.html",
+      "app.download": "Download current file",
       "app.open_tab": "Open in a new tab (run it live)",
       "msg.downloaded": "Downloaded index.html — double-click to open and run it in a browser.",
       "msg.copied": "Copied the source to your clipboard.",

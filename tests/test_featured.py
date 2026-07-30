@@ -1,8 +1,9 @@
 """Featured showcase (public gallery).
 
 The gallery is served read-only from the real featured/ directory (manifest +
-HTML files committed to the repo), so these tests assert the committed content
-is reachable WITHOUT auth and that the slug/path-safety guards hold.
+per-app subdirectories committed to the repo), so these tests assert the
+committed content is reachable WITHOUT auth and that the slug/path-safety
+guards hold.
 """
 from app import featured
 
@@ -15,10 +16,10 @@ def test_featured_list_is_public_and_nonempty(client):
     assert resp.status_code == 200
     items = resp.json()["featured"]
     assert isinstance(items, list) and len(items) >= 1
-    # Metadata only — the (large) HTML must NOT ride the list payload.
+    # Metadata only — file bodies must NOT ride the list payload.
     for it in items:
         assert "slug" in it and "title" in it and "provider" in it
-        assert "html" not in it
+        assert "files" not in it and "html" not in it
 
 
 def test_featured_list_includes_curated_slugs(client):
@@ -27,16 +28,26 @@ def test_featured_list_includes_curated_slugs(client):
     assert {"pomodoro", "city-explorer"} <= slugs
 
 
-# --- HTTP: detail is public + carries HTML --------------------------------
+# --- HTTP: detail returns a multi-file bundle -----------------------------
 
-def test_featured_detail_is_public_and_has_html(client):
+def test_featured_detail_returns_multi_file_bundle(client):
     resp = client.get("/api/featured/pomodoro")
     assert resp.status_code == 200
     body = resp.json()
     assert body["slug"] == "pomodoro"
     assert body["title"] and body["title_en"]
-    # A real, self-contained document.
-    assert "<!DOCTYPE html>" in body["html"] or "<html" in body["html"].lower()
+    assert body["entry"] == "index.html"
+
+    files = body["files"]
+    assert isinstance(files, list) and len(files) >= 2
+    # Entry sits first so the frontend can default to opening it.
+    assert files[0]["name"] == "index.html"
+    # Every file carries its raw source + a language tag for syntax hinting.
+    for f in files:
+        assert set(f) == {"name", "language", "content"}
+        assert isinstance(f["content"], str) and f["content"]
+    names = [f["name"] for f in files]
+    assert "style.css" in names and "app.js" in names
 
 
 def test_every_listed_entry_is_fetchable(client):
@@ -44,7 +55,9 @@ def test_every_listed_entry_is_fetchable(client):
     for it in client.get("/api/featured").json()["featured"]:
         detail = client.get(f"/api/featured/{it['slug']}")
         assert detail.status_code == 200, it["slug"]
-        assert detail.json()["html"]
+        body = detail.json()
+        assert body["files"], f"{it['slug']} has no files"
+        assert body["files"][0]["name"] == body["entry"]
 
 
 def test_featured_detail_unknown_slug_404(client):
@@ -58,6 +71,35 @@ def test_featured_works_when_logged_out(client):
     assert client.get("/api/featured/city-explorer").status_code == 200
 
 
+# --- HTTP: static file endpoint -------------------------------------------
+
+def test_featured_file_serves_entry_html(client):
+    """The static endpoint feeds the preview iframe with the app's own HTML."""
+    resp = client.get("/featured-files/pomodoro/index.html")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    # Multi-file layout: the split entry links external css/js by relative ref.
+    assert '<link rel="stylesheet" href="style.css">' in body
+    assert '<script src="app.js"></script>' in body
+
+
+def test_featured_file_serves_css_with_css_mime(client):
+    resp = client.get("/featured-files/pomodoro/style.css")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/css")
+
+
+def test_featured_file_rejects_traversal(client):
+    """Slug/name safety: path traversal never leaks files outside featured/<slug>/."""
+    # `..` is invalid as a filename segment, but the endpoint also enforces the
+    # resolved-path guard so a symlinked-out target would still be refused.
+    for bad_name in ["../manifest.json", "..%2fmanifest.json", "manifest.json", "nope.html"]:
+        assert client.get(f"/featured-files/pomodoro/{bad_name}").status_code == 404
+    for bad_slug in ["../pomodoro", ".hidden", "no such slug"]:
+        assert client.get(f"/featured-files/{bad_slug}/index.html").status_code == 404
+
+
 # --- unit: slug + path-traversal safety -----------------------------------
 
 def test_get_featured_rejects_traversal_and_bad_slugs():
@@ -66,9 +108,12 @@ def test_get_featured_rejects_traversal_and_bad_slugs():
         assert featured.get_featured(bad) is None
 
 
-def test_safe_file_confines_to_featured_dir():
+def test_read_file_confines_to_featured_dir():
     # Escapes and non-files are rejected; a real in-dir file resolves.
-    assert featured._safe_file("../app/main.py") is None
-    assert featured._safe_file("/etc/passwd") is None
-    assert featured._safe_file("nope.html") is None
-    assert featured._safe_file("pomodoro.html") is not None
+    assert featured.read_file("pomodoro", "../manifest.json") is None
+    assert featured.read_file("pomodoro", "/etc/passwd") is None
+    assert featured.read_file("pomodoro", "nope.html") is None
+    resolved = featured.read_file("pomodoro", "index.html")
+    assert resolved is not None
+    path, lang = resolved
+    assert path.name == "index.html" and lang == "html"

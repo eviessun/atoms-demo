@@ -70,14 +70,13 @@
                 data-i18n-tooltip="app.history_open" title="查看版本历史">🕘 <span data-i18n="app.history">版本历史</span></button>
         <button type="button" id="new-app" class="new-app hidden" data-i18n="app.new_app">＋ 新应用</button>
       </div>
-      <!-- File tree (Trae-style): the app we generate is a single index.html.
-           Click it to open its source in the preview panel's Code tab. -->
+      <!-- File tree (Trae-style): the currently-open app's source files.
+           Regular projects show a single index.html; featured apps show
+           index.html + style.css + app.js. Clicking a chip opens that file
+           in the preview panel's Code tab. -->
       <div class="file-strip hidden" id="file-strip">
         <span class="file-strip-label" data-i18n="app.files">文件</span>
-        <button type="button" class="file-chip" id="file-chip" data-file="index.html">
-          <span class="file-icon" aria-hidden="true">📄</span>
-          <span class="file-name">index.html</span>
-        </button>
+        <div class="file-chips" id="file-chips"></div>
       </div>
       <form class="composer" id="composer">
         <!-- Attached image thumbnails (base64 previews), shown only when images
@@ -164,12 +163,18 @@
              streaming, then holds the final source once generation completes. -->
         <div class="code-view hidden" id="code-view">
           <div class="code-view-head">
-            <span class="code-view-file">index.html</span>
+            <!-- File tabs. Populated by JS: one <button.code-file-tab> per file.
+                 Single-file apps (regular projects) get one tab; featured apps
+                 with multiple sources (index.html + style.css + app.js) show
+                 the full list and switch content on click. -->
+            <div class="code-file-tabs" id="code-file-tabs" role="tablist" aria-label="Files">
+              <button type="button" class="code-file-tab active" data-file="index.html">index.html</button>
+            </div>
             <div class="code-actions">
               <button type="button" class="code-copy" id="code-copy"
                       data-i18n-tooltip="app.copy" title="复制 / Copy">⧉</button>
               <button type="button" class="code-copy" id="code-download"
-                      data-i18n-tooltip="app.download" title="下载 index.html">⬇</button>
+                      data-i18n-tooltip="app.download" title="下载当前文件">⬇</button>
               <button type="button" class="code-copy" id="code-open"
                       data-i18n-tooltip="app.open_tab" title="在新标签页打开">↗</button>
             </div>

@@ -1,29 +1,37 @@
 """Featured showcase — a curated gallery of example apps guests can browse.
 
 These are apps we generated ahead of time with the same model pipeline as the
-live generator; we simply persist the finished HTML on disk and serve it read-
+live generator; we persist the finished sources on disk and serve them read-
 only. Unlike `projects` (per-user, login-gated), the showcase is PUBLIC: a guest
 can open the home page and preview a polished pomodoro timer or a city-switching
 travel map without an account — the "come see what this can build" front door.
 
-Storage is a plain directory so the artifacts are reviewable in git:
+Storage layout — one directory per app so index.html, style.css and app.js
+can be linked with plain relative refs (`<link href="style.css">`):
 
     featured/
-      manifest.json        # ordered list of entries (metadata only, no HTML)
-      pomodoro.html        # each entry's self-contained single-file app
-      city-explorer.html
+      manifest.json          # ordered list of entries (metadata only)
+      pomodoro/
+        index.html           # entry file — served at /featured-files/<slug>/
+        style.css
+        app.js
+      city-explorer/
+        index.html
+        style.css
+        app.js
 
 manifest.json shape:
     {
       "projects": [
         {
-          "slug": "pomodoro",            # url-safe id; also the HTML filename stem
-          "title": "番茄钟计时器",         # zh title
-          "title_en": "Pomodoro Timer",  # en title
+          "slug": "pomodoro",            # url-safe id; also the directory name
+          "title": "…",                   # zh title
+          "title_en": "…",                # en title
           "description": "…",             # zh one-liner
           "description_en": "…",          # en one-liner
           "provider": "Nemotron 3 Nano",  # model that produced it (badge)
-          "file": "pomodoro.html"         # HTML file, resolved INSIDE featured/
+          "dir": "pomodoro",              # directory INSIDE featured/
+          "entry": "index.html"           # optional; defaults to index.html
         }
       ]
     }
@@ -42,24 +50,50 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FEATURED_DIR = BASE_DIR / "featured"
 MANIFEST_PATH = FEATURED_DIR / "manifest.json"
 
-# A slug is our own id namespace; keep it strict so it can never be coerced into
-# a path traversal ("../"), an absolute path, or a hidden file. The manifest is
-# ours, but validating here means a bad hand-edit fails safe instead of leaking
-# files outside featured/.
+# A slug/dir is our own id namespace; keep it strict so it can never be coerced
+# into a path traversal ("../"), an absolute path, or a hidden file. Filenames
+# inside a showcase directory follow the same rule so a bad manifest hand-edit
+# fails safe instead of leaking files outside featured/<slug>/.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_FILE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+_LANGUAGES = {
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".js": "javascript",
+    ".mjs": "javascript",
+    ".json": "json",
+    ".svg": "svg",
+    ".txt": "text",
+    ".md": "markdown",
+}
 
 
-def _safe_file(name: str) -> Path | None:
-    """Resolve a manifest `file` to a real path INSIDE featured/, or None.
+def _safe_dir(name: str) -> Path | None:
+    """Resolve a manifest `dir` to a real directory INSIDE featured/, or None.
 
     Rejects anything that escapes the directory (``../``, absolute paths,
     symlinked-out targets) by comparing the resolved path against the resolved
-    featured dir — so a malformed manifest entry can't read arbitrary files."""
-    if not name or "/" in name or "\\" in name or name.startswith("."):
+    featured dir — so a malformed manifest entry can't read arbitrary paths."""
+    if not name or not _SLUG_RE.match(name):
         return None
     candidate = (FEATURED_DIR / name).resolve()
     root = FEATURED_DIR.resolve()
-    if candidate != root and root in candidate.parents and candidate.is_file():
+    if candidate != root and root in candidate.parents and candidate.is_dir():
+        return candidate
+    return None
+
+
+def _safe_file_in(dir_path: Path, name: str) -> Path | None:
+    """Resolve a filename INSIDE a showcase directory, or None.
+
+    Only accepts plain names (no slashes, no dot-prefix); rejects anything that
+    escapes the showcase directory via `..` or a symlink target outside root."""
+    if not name or not _FILE_RE.match(name):
+        return None
+    candidate = (dir_path / name).resolve()
+    if candidate != dir_path and dir_path in candidate.parents and candidate.is_file():
         return candidate
     return None
 
@@ -67,8 +101,8 @@ def _safe_file(name: str) -> Path | None:
 @lru_cache(maxsize=1)
 def _manifest() -> list[dict]:
     """Load + validate manifest.json once. Entries missing a valid slug or a
-    readable in-bounds file are dropped, so the gallery only ever lists items we
-    can actually serve. Returns [] when the manifest is absent/broken."""
+    readable in-bounds directory (with the entry file present) are dropped, so
+    the gallery only lists items we can actually serve. Returns [] on error."""
     try:
         raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -85,16 +119,21 @@ def _manifest() -> list[dict]:
         slug = str(e.get("slug", "")).strip()
         if not _SLUG_RE.match(slug) or slug in seen:
             continue
-        if _safe_file(str(e.get("file", ""))) is None:
+        dir_name = str(e.get("dir", slug)).strip()
+        dir_path = _safe_dir(dir_name)
+        if dir_path is None:
+            continue
+        entry_name = str(e.get("entry", "index.html")).strip() or "index.html"
+        if _safe_file_in(dir_path, entry_name) is None:
             continue
         seen.add(slug)
-        clean.append(e)
+        clean.append({**e, "dir": dir_name, "entry": entry_name})
     return clean
 
 
 def _meta(entry: dict) -> dict:
-    """The public metadata for one entry (no HTML). Both language variants are
-    sent so the frontend can switch without a round trip."""
+    """Public metadata for one entry (no file contents). Both language variants
+    ship so the frontend can switch without a round trip."""
     return {
         "slug": entry["slug"],
         "title": entry.get("title", entry["slug"]),
@@ -106,24 +145,74 @@ def _meta(entry: dict) -> dict:
 
 
 def list_featured() -> list[dict]:
-    """Ordered metadata for the whole gallery (no HTML — the list view is light;
-    HTML is fetched per item on open)."""
+    """Ordered metadata for the whole gallery (no file contents)."""
     return [_meta(e) for e in _manifest()]
 
 
-def get_featured(slug: str) -> dict | None:
-    """One entry's metadata + its full HTML, or None if the slug is unknown or
-    its file has gone missing."""
+def _find(slug: str) -> dict | None:
     if not slug or not _SLUG_RE.match(slug):
         return None
     for e in _manifest():
         if e["slug"] == slug:
-            path = _safe_file(str(e.get("file", "")))
-            if path is None:
-                return None
-            try:
-                html = path.read_text(encoding="utf-8")
-            except OSError:
-                return None
-            return {**_meta(e), "html": html}
+            return e
     return None
+
+
+def _language_for(name: str) -> str:
+    return _LANGUAGES.get(Path(name).suffix.lower(), "text")
+
+
+def get_featured(slug: str) -> dict | None:
+    """Metadata + every source file in the showcase directory, entry first.
+
+    Files come back as ``[{name, language, content}, ...]`` in stable order:
+    the entry (index.html) is always index 0 so the frontend can open it as
+    the default tab; the rest follow in sorted order. Returns None if the slug
+    is unknown or the directory has been removed."""
+    entry = _find(slug)
+    if entry is None:
+        return None
+    dir_path = _safe_dir(entry["dir"])
+    if dir_path is None:
+        return None
+
+    entry_name = entry["entry"]
+    names: list[str] = []
+    for p in sorted(dir_path.iterdir()):
+        if p.is_file() and _FILE_RE.match(p.name) and p.name != entry_name:
+            names.append(p.name)
+    ordered = [entry_name, *names]
+
+    files: list[dict] = []
+    for name in ordered:
+        path = _safe_file_in(dir_path, name)
+        if path is None:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        files.append({
+            "name": name,
+            "language": _language_for(name),
+            "content": content,
+        })
+    if not files:
+        return None
+    return {**_meta(entry), "entry": entry_name, "files": files}
+
+
+def read_file(slug: str, name: str) -> tuple[Path, str] | None:
+    """Resolve one showcase file for the static preview endpoint. Returns the
+    absolute path + a MIME-friendly language tag, or None if slug/name don't
+    map to a real file inside featured/<slug>/."""
+    entry = _find(slug)
+    if entry is None:
+        return None
+    dir_path = _safe_dir(entry["dir"])
+    if dir_path is None:
+        return None
+    path = _safe_file_in(dir_path, name)
+    if path is None:
+        return None
+    return path, _language_for(name)

@@ -38,14 +38,19 @@ function extractShowPreviewBody() {
 
 // Rebuild showPreview as a callable with its collaborators injected as params,
 // so the extracted source runs against our spies instead of app.js globals.
+// showPreview mutates a module-level `currentActiveFile` and calls a helper
+// `renderFileTabs()` that repaints the file tab strip. The tab-strip helper
+// isn't the subject here (dedicated tests cover it), so we inject a no-op spy
+// and expose currentActiveFile as a `let` local inside the sandbox so the
+// assignment doesn't throw.
 function makeShowPreview(deps) {
   const body = extractShowPreviewBody();
   const fn = new Function(
-    "html", "setCode", "previewEl", "requestAnimationFrame", "switchTab",
-    body,
+    "html", "setCode", "previewEl", "requestAnimationFrame", "switchTab", "renderFileTabs",
+    "let currentActiveFile;\n" + body,
   );
   return (html) =>
-    fn(html, deps.setCode, deps.previewEl, deps.requestAnimationFrame, deps.switchTab);
+    fn(html, deps.setCode, deps.previewEl, deps.requestAnimationFrame, deps.switchTab, deps.renderFileTabs);
 }
 
 // A harness that records the ORDER of the side effects we care about, and lets
@@ -58,6 +63,9 @@ function makeHarness() {
     _srcdoc: "",
     set srcdoc(v) { this._srcdoc = v; events.push("srcdoc"); },
     get srcdoc() { return this._srcdoc; },
+    // showPreview clears any stale `src` (used by multi-file mode) before
+    // assigning srcdoc; a real HTMLIFrameElement always has this method.
+    removeAttribute() {},
   };
 
   const deps = {
@@ -65,6 +73,7 @@ function makeHarness() {
     previewEl,
     requestAnimationFrame: (cb) => { events.push("raf"); rafCb = cb; },
     switchTab: (tab) => { events.push(`switchTab:${tab}`); },
+    renderFileTabs: () => {},
   };
 
   return {

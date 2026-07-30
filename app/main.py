@@ -450,11 +450,38 @@ def featured_list():
 
 @app.get("/api/featured/{slug}")
 def featured_detail(slug: str):
-    """Fetch one showcase app's metadata + HTML for preview. No auth required."""
+    """Metadata + every source file (index.html, style.css, app.js…) so the
+    Code tab can render a file switcher. No auth required."""
     entry = featured.get_featured(slug)
     if entry is None:
         return JSONResponse(status_code=404, content={"error": "not found"})
     return entry
+
+
+# MIME map for the static-file endpoint. Kept narrow so we serve only the
+# text/asset types a showcase app actually needs (no arbitrary octet-streams
+# even if a manifest-listed dir grows a stray binary).
+_FEATURED_MIME = {
+    "html": "text/html; charset=utf-8",
+    "css": "text/css; charset=utf-8",
+    "javascript": "application/javascript; charset=utf-8",
+    "json": "application/json; charset=utf-8",
+    "svg": "image/svg+xml",
+    "markdown": "text/markdown; charset=utf-8",
+    "text": "text/plain; charset=utf-8",
+}
+
+
+@app.get("/featured-files/{slug}/{name}")
+def featured_file(slug: str, name: str):
+    """Serve one raw source file from a showcase directory so the preview
+    iframe can load it by relative URL (``<link href="style.css">`` in the
+    entry HTML just works). Public, read-only, MIME-typed by extension."""
+    resolved = featured.read_file(slug, name)
+    if resolved is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    path, language = resolved
+    return FileResponse(path, media_type=_FEATURED_MIME.get(language, "text/plain; charset=utf-8"))
 
 
 # --- frontend ------------------------------------------------------------

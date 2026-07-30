@@ -1,18 +1,20 @@
 """One-off generator for the featured showcase gallery.
 
 Runs the SAME model pipeline the live app uses (app.llm.generate_app_html) to
-produce two polished, self-contained example apps, then writes each to
-featured/<slug>.html and (re)writes featured/manifest.json.
+produce two polished example apps, splits each one into
+featured/<slug>/{index.html, style.css, app.js}, and (re)writes
+featured/manifest.json.
 
 Run:  .venv/bin/python scripts/gen_featured.py
 
-Re-runnable: overwrites the HTML + manifest each time. Uses the server-default
-free model unless GEN_MODEL is set.
+Re-runnable: overwrites the split files + manifest each time. Uses the server-
+default free model unless GEN_MODEL is set.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -22,6 +24,30 @@ from app.config import settings          # noqa: E402
 from app.llm import generate_app_html    # noqa: E402
 
 FEATURED_DIR = Path(__file__).resolve().parent.parent / "featured"
+
+_STYLE_RE = re.compile(r"<style>(.*?)</style>", re.DOTALL)
+_SCRIPT_RE = re.compile(r"<script>(.*?)</script>", re.DOTALL)
+
+
+def split_and_write(slug: str, html: str) -> Path:
+    """Extract the FIRST inline <style> and <script> blocks into separate files
+    and rewrite the entry HTML to link them by relative path. Falls back to a
+    single-file layout when either block is missing (still valid — the manifest
+    treats index.html as the entry either way)."""
+    out_dir = FEATURED_DIR / slug
+    out_dir.mkdir(exist_ok=True)
+
+    style_m = _STYLE_RE.search(html)
+    script_m = _SCRIPT_RE.search(html)
+    entry = html
+    if style_m:
+        (out_dir / "style.css").write_text(style_m.group(1).strip("\n") + "\n", encoding="utf-8")
+        entry = _STYLE_RE.sub('<link rel="stylesheet" href="style.css">', entry, count=1)
+    if script_m:
+        (out_dir / "app.js").write_text(script_m.group(1).strip("\n") + "\n", encoding="utf-8")
+        entry = _SCRIPT_RE.sub('<script src="app.js"></script>', entry, count=1)
+    (out_dir / "index.html").write_text(entry, encoding="utf-8")
+    return out_dir
 
 # Shared quality bar prepended to every prompt. The preview iframe is sandboxed
 # with allow-scripts but NOT allow-same-origin, so Web Storage throws — forbid
@@ -90,7 +116,6 @@ ENTRIES = [
         "title_en": "Focus Pomodoro",
         "description": "带圆环倒计时、任务清单与提示音的番茄工作法计时器。",
         "description_en": "A Pomodoro timer with a circular countdown ring, task list, and chime.",
-        "file": "pomodoro.html",
         "prompt": POMODORO,
     },
     {
@@ -99,7 +124,6 @@ ENTRIES = [
         "title_en": "City Explorer",
         "description": "按城市切换手绘地图与热门旅游景点，点击查看景点详情。",
         "description_en": "Switch hand-drawn maps and top attractions by city; click a pin for details.",
-        "file": "city-explorer.html",
         "prompt": CITY_MAP,
     },
 ]
@@ -112,13 +136,13 @@ def main() -> None:
     for e in ENTRIES:
         print(f"[gen] {e['slug']} via {model_id} …", flush=True)
         html, provider = generate_app_html(e["prompt"], model_id=model_id)
-        out = FEATURED_DIR / e["file"]
-        out.write_text(html, encoding="utf-8")
-        print(f"      -> {out.name}  ({len(html):,} bytes, provider={provider})")
+        out_dir = split_and_write(e["slug"], html)
+        print(f"      -> {out_dir.name}/{{index.html,style.css,app.js}}"
+              f"  ({len(html):,} bytes, provider={provider})")
         manifest["projects"].append({
             "slug": e["slug"], "title": e["title"], "title_en": e["title_en"],
             "description": e["description"], "description_en": e["description_en"],
-            "provider": provider, "file": e["file"],
+            "provider": provider, "dir": e["slug"],
         })
     (FEATURED_DIR / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

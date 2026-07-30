@@ -30,13 +30,14 @@ const tabPreview = document.getElementById("tab-preview");
 const tabCode = document.getElementById("tab-code");
 const codeView = document.getElementById("code-view");
 const codeContent = document.getElementById("code-content");
+const codeFileTabs = document.getElementById("code-file-tabs");
 const codeCopy = document.getElementById("code-copy");
 const codeDownload = document.getElementById("code-download");
 const codeOpen = document.getElementById("code-open");
 const codeScroller = codeContent.parentElement;   // the scrollable <pre>
 // File strip above the composer
 const fileStrip = document.getElementById("file-strip");
-const fileChip = document.getElementById("file-chip");
+const fileChips = document.getElementById("file-chips");
 // Composer multimodal tools: image attach + voice input
 const attachStrip = document.getElementById("attach-strip");
 const attachBtn = document.getElementById("attach-btn");
@@ -79,6 +80,18 @@ const BYOK_STORE_KEY = "atoms:byok";   // {key,model,base_url,transport,provider
 let currentProjectId = null;
 let currentHtml = null;
 let currentTitle = "";       // first prompt / project name, shown in the edit banner
+
+// Multi-file mode: set when a featured showcase is opened (its sources are
+// distributed across index.html + style.css + app.js). null for regular
+// projects and freshly generated apps, which stay single-file. When set:
+//   - the Code tab shows a file switcher (tabs) and the file strip lists chips
+//   - the preview iframe uses `src` (served from /featured-files/) so relative
+//     <link> / <script src> refs resolve; single-file mode still uses `srcdoc`
+//   - iterate/edit is disabled (featured apps are read-only demos)
+// `files` is [{name, language, content}]; the entry (index.html) is at [0].
+let currentFiles = null;
+let currentFilesSlug = null;   // slug for /featured-files/<slug>/... iframe src
+let currentActiveFile = null;  // name of the file currently shown in the Code tab
 
 // Guards against overlapping generations. A second submit while one is still
 // running would race: the first hasn't returned its project_id yet, so the
@@ -142,6 +155,11 @@ function setStatus(key) {
 
 let activeTab = "preview";   // "preview" | "code"
 
+// True while any app is loaded (single-file OR multi-file). Both modes flow
+// through this predicate so the preview/code visibility logic doesn't need to
+// care which mode we're in.
+function hasApp() { return currentHtml != null || currentFiles != null; }
+
 function switchTab(tab) {
   activeTab = tab;
   tabPreview.classList.toggle("active", tab === "preview");
@@ -150,18 +168,85 @@ function switchTab(tab) {
   const showCode = tab === "code";
   codeView.classList.toggle("hidden", !showCode);
   // In preview mode, show whichever of placeholder/iframe is appropriate.
-  previewPlaceholder.classList.toggle("hidden", showCode || currentHtml != null);
-  previewEl.classList.toggle("hidden", showCode || currentHtml == null);
+  const loaded = hasApp();
+  previewPlaceholder.classList.toggle("hidden", showCode || loaded);
+  previewEl.classList.toggle("hidden", showCode || !loaded);
 }
 
-// Put source into the Code tab. Used both live (streaming) and on completion.
+// Put source into the Code tab. Used both live (streaming, single-file) and on
+// completion; for multi-file mode selectCodeFile() drives it instead.
 function setCode(source) {
   codeContent.textContent = source;
 }
 
+// Rebuild the code-view file tab strip and the composer file-chip strip from
+// the current mode. Single-file mode shows one tab/chip named "index.html";
+// multi-file mode lists every file, with the active one highlighted.
+function renderFileTabs() {
+  const files = currentFiles
+    ? currentFiles.map((f) => f.name)
+    : (currentHtml != null ? ["index.html"] : []);
+  const active = currentActiveFile || files[0] || "index.html";
+
+  codeFileTabs.innerHTML = "";
+  fileChips.innerHTML = "";
+  for (const name of files) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "code-file-tab" + (name === active ? " active" : "");
+    tab.dataset.file = name;
+    tab.textContent = name;
+    tab.onclick = () => selectCodeFile(name);
+    codeFileTabs.appendChild(tab);
+
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "file-chip" + (name === active ? " active" : "");
+    chip.dataset.file = name;
+    const icon = document.createElement("span");
+    icon.className = "file-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "📄";
+    const label = document.createElement("span");
+    label.className = "file-name";
+    label.textContent = name;
+    chip.append(icon, label);
+    chip.onclick = () => {
+      selectCodeFile(name);
+      switchTab("code");
+    };
+    fileChips.appendChild(chip);
+  }
+}
+
+// Switch which file's source the Code tab is showing. In multi-file mode this
+// swaps codeContent from the file's cached content; in single-file mode it's
+// a no-op (there's only one file).
+function selectCodeFile(name) {
+  currentActiveFile = name;
+  if (currentFiles) {
+    const f = currentFiles.find((x) => x.name === name);
+    setCode(f ? f.content : "");
+  } else if (currentHtml != null) {
+    setCode(currentHtml);
+  }
+  // Refresh active-state highlighting without rebuilding the DOM.
+  for (const t of codeFileTabs.querySelectorAll(".code-file-tab")) {
+    t.classList.toggle("active", t.dataset.file === name);
+  }
+  for (const c of fileChips.querySelectorAll(".file-chip")) {
+    c.classList.toggle("active", c.dataset.file === name);
+  }
+}
+
 // Swap the dark placeholder for the (white) iframe once we have content to show.
+// Single-file mode (regular project / freshly generated app) — inline HTML
+// via srcdoc so we don't need a server-side URL.
 function showPreview(html) {
+  currentActiveFile = "index.html";
   setCode(html);
+  renderFileTabs();
+  previewEl.removeAttribute("src");
   previewEl.srcdoc = html;
   // Reveal (hidden -> visible) on the NEXT frame, not this one. During
   // streaming we're on the Code tab, so the iframe is display:none when srcdoc
@@ -173,17 +258,42 @@ function showPreview(html) {
   requestAnimationFrame(() => switchTab("preview"));
 }
 
+// Multi-file mode (featured showcase) — the iframe loads the entry HTML from
+// a real URL so its relative <link> / <script src> refs resolve against the
+// backend static endpoint. The Code tab is populated from the in-memory files
+// list, so it stays in sync with what the iframe fetched.
+function showPreviewMultiFile({ slug, entry }) {
+  currentFilesSlug = slug;
+  currentActiveFile = entry;
+  const first = currentFiles.find((f) => f.name === entry) || currentFiles[0];
+  setCode(first ? first.content : "");
+  renderFileTabs();
+  previewEl.srcdoc = "";
+  previewEl.src = `/featured-files/${encodeURIComponent(slug)}/${encodeURIComponent(entry)}`;
+  requestAnimationFrame(() => switchTab("preview"));
+}
+
 // --- create / iterate mode ----------------------------------------------
 // Reflect whether we're building a new app or editing the current one. In edit
 // mode the banner names the app, a "＋ new app" button appears, and the
 // composer button/placeholder switch to the "update" wording.
 
 function renderMode() {
-  const editing = currentHtml != null;
+  const loaded = hasApp();
+  // Featured showcases are read-only demos, not editable projects — the composer
+  // stays in "new app" mode so a submit starts a brand-new project (guests still
+  // hit the login gate on the first keystroke).
+  const editing = loaded && currentFiles == null;
   if (editing) {
     modeLabel.textContent = i18n.t("app.mode_edit", { name: currentTitle });
     sendBtn.textContent = i18n.t("app.iterate");
     promptEl.placeholder = i18n.t("app.prompt_ph_edit");
+    newAppBtn.classList.remove("hidden");
+  } else if (currentFiles != null) {
+    // Featured mode: banner labels the showcase; "new app" button clears it.
+    modeLabel.textContent = i18n.t("app.mode_featured", { name: currentTitle });
+    sendBtn.textContent = i18n.t("app.generate");
+    promptEl.placeholder = i18n.t("app.prompt_ph");
     newAppBtn.classList.remove("hidden");
   } else {
     modeLabel.textContent = i18n.t("app.mode_new");
@@ -191,8 +301,8 @@ function renderMode() {
     promptEl.placeholder = i18n.t("app.prompt_ph");
     newAppBtn.classList.add("hidden");
   }
-  // The file strip only makes sense once there's an app (a file) to show.
-  fileStrip.classList.toggle("hidden", !editing);
+  // The file strip only makes sense once there's an app (file(s)) to show.
+  fileStrip.classList.toggle("hidden", !loaded);
   // Version history exists only for saved projects (persisted server-side).
   historyBtn.classList.toggle("hidden", !(editing && currentProjectId != null));
 }
@@ -201,6 +311,21 @@ function renderMode() {
 function enterEditMode({ projectId, html, title }) {
   currentProjectId = projectId ?? null;
   currentHtml = html;
+  // Leaving multi-file mode: clear those flags so single-file rendering wins.
+  currentFiles = null;
+  currentFilesSlug = null;
+  if (title) currentTitle = title;
+  renderMode();
+}
+
+// Enter read-only "featured" mode for a showcase app. Distinct from
+// enterEditMode because these aren't user-owned and shouldn't be iterated on.
+function enterFeaturedMode({ slug, files, entry, title }) {
+  currentProjectId = null;
+  currentHtml = null;
+  currentFiles = files;
+  currentFilesSlug = slug;
+  currentActiveFile = entry;
   if (title) currentTitle = title;
   renderMode();
 }
@@ -209,8 +334,14 @@ function enterEditMode({ projectId, html, title }) {
 function startNewApp() {
   currentProjectId = null;
   currentHtml = null;
+  currentFiles = null;
+  currentFilesSlug = null;
+  currentActiveFile = null;
   currentTitle = "";
   setCode("");
+  renderFileTabs();
+  previewEl.removeAttribute("src");
+  previewEl.srcdoc = "";
   switchTab("preview");   // reset to the placeholder
   setStatus("status.idle");
   // Clear the conversation so the new app starts fresh — otherwise the previous
@@ -454,12 +585,15 @@ async function loadFeatured() {
 
 async function openFeatured(slug) {
   const { ok, data } = await api(`/api/featured/${slug}`);
-  if (!ok) { addMessage("assistant", i18n.t("msg.featured_open_fail")); return; }
+  if (!ok || !Array.isArray(data.files) || !data.files.length) {
+    addMessage("assistant", i18n.t("msg.featured_open_fail"));
+    return;
+  }
   const { title } = featuredText(data);
-  // Load as the current app (no project_id) so it renders in the preview and
-  // can be remixed. currentHtml must be set for showPreview to reveal the iframe.
-  enterEditMode({ projectId: null, html: data.html, title });
-  showPreview(data.html);
+  // Read-only multi-file mode: the iframe loads /featured-files/<slug>/<entry>
+  // so relative <link>/<script src> refs work; the Code tab lists every file.
+  enterFeaturedMode({ slug, files: data.files, entry: data.entry, title });
+  showPreviewMultiFile({ slug, entry: data.entry });
   setStatus("status.ready");
   addMessage("assistant", i18n.t("msg.featured_loaded", { title }));
 }
@@ -1179,12 +1313,33 @@ newAppBtn.addEventListener("click", startNewApp);
 // Preview/Code tabs, file chip, and copy button.
 tabPreview.addEventListener("click", () => switchTab("preview"));
 tabCode.addEventListener("click", () => switchTab("code"));
-// Clicking the file opens its source in the Code tab (single-file app).
-fileChip.addEventListener("click", () => switchTab("code"));
+
+// Resolve what the code-actions buttons should operate on: the currently
+// active file in multi-file mode, or the whole app HTML in single-file mode.
+// Returns null when nothing is loaded so the handlers can silently no-op.
+function activeSource() {
+  if (currentFiles) {
+    const name = currentActiveFile || currentFiles[0].name;
+    const f = currentFiles.find((x) => x.name === name);
+    if (!f) return null;
+    const ext = (name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
+    const type = ext === ".css" ? "text/css"
+      : ext === ".js" ? "application/javascript"
+      : ext === ".json" ? "application/json"
+      : "text/html";
+    return { name, content: f.content, mime: `${type};charset=utf-8` };
+  }
+  if (currentHtml != null) {
+    return { name: appFilename(), content: currentHtml, mime: "text/html;charset=utf-8" };
+  }
+  return null;
+}
+
 codeCopy.addEventListener("click", async () => {
-  if (!currentHtml) return;
+  const src = activeSource();
+  if (!src) return;
   try {
-    await navigator.clipboard.writeText(currentHtml);
+    await navigator.clipboard.writeText(src.content);
     const prev = codeCopy.textContent;
     codeCopy.textContent = "✓";
     setTimeout(() => { codeCopy.textContent = prev; }, 1200);
@@ -1207,12 +1362,13 @@ function appFilename() {
 }
 
 codeDownload.addEventListener("click", () => {
-  if (!currentHtml) return;
-  const blob = new Blob([currentHtml], { type: "text/html;charset=utf-8" });
+  const src = activeSource();
+  if (!src) return;
+  const blob = new Blob([src.content], { type: src.mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = appFilename();
+  a.download = src.name;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1221,9 +1377,18 @@ codeDownload.addEventListener("click", () => {
 });
 
 codeOpen.addEventListener("click", () => {
-  if (!currentHtml) return;
-  // Blob URL (not srcdoc) so the new tab runs the app at its own origin.
-  const blob = new Blob([currentHtml], { type: "text/html;charset=utf-8" });
+  // Featured (multi-file) apps: open the entry through the static endpoint so
+  // the standalone tab keeps working relative refs (css/js). Everything else:
+  // ship the current file as a blob URL so the new tab runs at its own origin.
+  if (currentFiles && currentFilesSlug) {
+    const entry = currentFiles[0]?.name || "index.html";
+    window.open(`/featured-files/${encodeURIComponent(currentFilesSlug)}/${encodeURIComponent(entry)}`,
+                "_blank", "noopener");
+    return;
+  }
+  const src = activeSource();
+  if (!src) return;
+  const blob = new Blob([src.content], { type: src.mime });
   const url = URL.createObjectURL(blob);
   window.open(url, "_blank", "noopener");
   // Give the new tab time to load before releasing the object URL.

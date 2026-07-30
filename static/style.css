@@ -562,7 +562,17 @@ body.resizing-v iframe { pointer-events: none; }
   cursor: pointer;
 }
 .file-chip:hover { border-color: var(--accent); color: var(--accent); }
+.file-chip.active { border-color: var(--accent); color: var(--accent); background: var(--tint); }
 .file-chip .file-icon { font-size: 0.9rem; }
+/* Chip row for multi-file apps: scrolls sideways when the strip is narrower
+   than the total chips (e.g. many small files on a phone). */
+.file-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+}
 
 
 .composer {
@@ -874,12 +884,40 @@ iframe {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 6px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   color: #cdd6f4;
   font-size: 0.78rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   flex-shrink: 0;
+}
+/* File tabs inside the code-view head: one per source file so multi-file
+   apps (featured showcase) can flip between index.html / style.css / app.js.
+   Horizontally scrollable when there are more tabs than fit. */
+.code-file-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+}
+.code-file-tab {
+  background: transparent;
+  color: #a6adc8;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  padding: 3px 10px;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.code-file-tab:hover { color: #fff; }
+.code-file-tab.active {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.15);
+  border-bottom-color: transparent;
+  background: rgba(255, 255, 255, 0.05);
 }
 .code-copy {
   background: transparent;

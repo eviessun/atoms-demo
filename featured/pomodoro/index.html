@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>专注番茄钟 / Focus Pomodoro</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header>专注番茄钟 / Focus Pomodoro</header>
+  <section class="timer-container">
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="focus" aria-label="Focus mode">Focus</button>
+      <button class="mode-tab" data-mode="short" aria-label="Short break">Short Break</button>
+      <button class="mode-tab" data-mode="long" aria-label="Long break">Long Break</button>
+    </div>
+    <div class="ring-wrapper">
+      <svg class="timer-svg" viewBox="0 0 100 100">
+        <circle class="timer-bg" cx="50" cy="50" r="45" />
+        <circle class="timer-progress focus" cx="50" cy="50" r="45" stroke-dasharray="283" stroke-dashoffset="283" />
+      </svg>
+      <div class="timer-display">
+        <span class="time">25:00</span>
+        <div class="current-task">Current task: <span class="task-name"></span></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="startBtn" class="btn-primary" aria-label="Start timer">▶️ Start</button>
+      <button id="pauseBtn" class="btn-secondary" aria-label="Pause timer">⏸️ Pause</button>
+      <button id="resetBtn" class="btn-secondary" aria-label="Reset timer">⏮️ Reset</button>
+    </div>
+    <div class="pomodoros">
+      Completed today: <span class="pomodoros-count">0</span> 🍅
+    </div>
+    <div class="settings">
+      <label>Focus: <input type="number" id="focusInput" min="1" value="25"> min</label>
+      <label>Short: <input type="number" id="shortInput" min="1" value="5"> min</label>
+      <label>Long: <input type="number" id="longInput" min="1" value="15"> min</label>
+    </div>
+  </section>
+  <section class="task-list">
+    <h2>Tasks</h2>
+    <div class="input-group">
+      <input type="text" id="taskInput" placeholder="Add a task..." aria-label="New task">
+      <button id="addTaskBtn" aria-label="Add task">+</button>
+    </div>
+    <ul id="taskList"></ul>
+  </section>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

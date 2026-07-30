@@ -1,0 +1,64 @@
+:root{
+  --bg:#fafafa;
+  --primary:#2c3e50;
+  --accent:#e67e22;
+  --card-bg:#ffffff;
+  --text:#333;
+  --muted:#777;
+  --pin:#e74c3c;
+  --pin-active:#f1c40f;
+  --transition:0.3s ease;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);}
+header{padding:1rem;text-align:center;background:var(--primary);color:#fff;}
+h1{margin:0;font-size:1.5rem;}
+.city-selector{display:flex;overflow-x:auto;gap:0.5rem;justify-content:center;padding:0.5rem;}
+.city-selector button{
+  min-width:60px;padding:0.4rem 0.8rem;border:none;border-radius:20px;
+  background:rgba(255,255,255,0.2);color:#fff;cursor:pointer;font-size:0.9rem;
+  transition:var(--transition);
+}
+.city-selector button.active,
+.city-selector button:hover{background:rgba(255,255,255,0.4);}
+.container{display:flex;gap:1rem;padding:1rem;max-width:1200px;margin:auto;}
+.map-panel{flex:1 1 400px;min-width:260px;}
+.attractions-panel{flex:0 0 260px;min-width:200px;display:flex;flex-direction:column;}
+.attractions-panel .header-line{
+  font-weight:600;margin-bottom:0.5rem;padding:0.2rem;background:rgba(0,0,0,0.05);
+  border-radius:4px;
+}
+.attractions-list{
+  list-style:none;margin:0;padding:0;overflow-y:auto;max-height:calc(100vh - 200px);
+}
+.attractions-list li{
+  padding:0.6rem 0.8rem;border-bottom:1px solid #eee;display:flex;align-items:center;gap:0.5rem;cursor:pointer;
+}
+.attractions-list li:hover,
+.attractions-list li.active{background:rgba(0,0,0,0.03);}
+.detail-card{
+  position:fixed;inset:0;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;z-index:1000;
+  animation:fadeIn .3s;
+}
+.detail-card.show{display:flex;}
+.detail-card-content{
+  background:var(--card-bg);border-radius:12px;max-width:90%;width:320px;padding:1.5rem;box-shadow:0 4px 24px rgba(0,0,0,0.2);
+  position:relative;animation:slideUp .3s;
+}
+.close-btn{
+  position:absolute;top:.5rem;right:.5rem;background:none;border:none;font-size:1.5rem;cursor:pointer;
+}
+.category-chip{
+  display:inline-block;padding:.2rem .5rem;border-radius:12px;font-size:.8rem;background:#eee;margin-bottom:.5rem;
+}
+.rating{font-size:1.2rem;color:#f1c40f;margin-top:.5rem;}
+svg.city-map{width:100%;height:auto;display:block;background:#fff;border-radius:8px;}
+.pin{cursor:pointer;transition:transform .2s;}
+.pin:hover{transform:scale(1.3);}
+.pin.active{fill:var(--pin-active);}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:600px){
+  .container{flex-direction:column;}
+  .attractions-panel{order:-1;height:200px;}
+}
