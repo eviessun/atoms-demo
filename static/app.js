@@ -229,6 +229,24 @@ async function loadMe() {
 
 // --- projects ------------------------------------------------------------
 
+// Render a server timestamp as Beijing time (UTC+8): "YYYY-MM-DD HH:MM:SS".
+// The backend sends either an ISO string with an offset (Postgres, e.g.
+// "2026-07-30T03:23:15.096132+00:00") or a space-separated UTC string with no
+// offset (SQLite datetime('now')). Normalize the offset-less form to explicit
+// UTC, then shift +8h and read the UTC fields so the output is deterministic
+// regardless of the viewer's own locale/timezone.
+function formatBeijingTime(ts) {
+  if (!ts) return "";
+  let s = String(ts);
+  if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) s = s.replace(" ", "T") + "Z";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return String(ts);  // unparseable: show raw
+  const bj = new Date(d.getTime() + 8 * 3600 * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${bj.getUTCFullYear()}-${p(bj.getUTCMonth() + 1)}-${p(bj.getUTCDate())} ` +
+         `${p(bj.getUTCHours())}:${p(bj.getUTCMinutes())}:${p(bj.getUTCSeconds())}`;
+}
+
 function renderProjects(items) {
   lastProjects = items || [];
   projectsList.innerHTML = "";
@@ -254,7 +272,7 @@ function renderProjects(items) {
     title.textContent = p.prompt;
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `#${p.id} · ${p.provider} · ${p.created_at}`;
+    meta.textContent = `#${p.id} · ${p.provider} · ${formatBeijingTime(p.created_at)}`;
     li.append(title, meta);
     li.onclick = () => openProject(p.id);
     projectsList.appendChild(li);
@@ -315,7 +333,7 @@ function renderHistory(versions) {
     title.textContent = v.prompt;
     const meta = document.createElement("div");
     meta.className = "history-meta";
-    meta.textContent = `v${v.id} · ${v.provider} · ${v.created_at}${badge}`;
+    meta.textContent = `v${v.id} · ${v.provider} · ${formatBeijingTime(v.created_at)}${badge}`;
     info.append(title, meta);
 
     const actions = document.createElement("div");
