@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, db
+from . import auth, db, featured
 from .config import BYOK_PRESETS, available_models, build_byok_spec, settings
 from .llm import generate_app_html, stream_app_html
 
@@ -435,6 +435,26 @@ def project_version_restore(project_id: int, version_id: int, request: Request):
     if row is None:
         return JSONResponse(status_code=404, content={"error": "not found"})
     return dict(row)
+
+
+# --- featured showcase (public) ------------------------------------------
+# A curated gallery of example apps, generated ahead of time with the same
+# model pipeline and served read-only. PUBLIC on purpose: guests browse and
+# preview these without an account — the "see what this can build" front door.
+
+@app.get("/api/featured")
+def featured_list():
+    """List the showcase gallery (metadata only, no HTML). No auth required."""
+    return {"featured": featured.list_featured()}
+
+
+@app.get("/api/featured/{slug}")
+def featured_detail(slug: str):
+    """Fetch one showcase app's metadata + HTML for preview. No auth required."""
+    entry = featured.get_featured(slug)
+    if entry is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return entry
 
 
 # --- frontend ------------------------------------------------------------

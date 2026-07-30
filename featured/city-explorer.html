@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>城市漫游 / City Explorer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#fafafa;
+  --primary:#2c3e50;
+  --accent:#e67e22;
+  --card-bg:#ffffff;
+  --text:#333;
+  --muted:#777;
+  --pin:#e74c3c;
+  --pin-active:#f1c40f;
+  --transition:0.3s ease;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);}
+header{padding:1rem;text-align:center;background:var(--primary);color:#fff;}
+h1{margin:0;font-size:1.5rem;}
+.city-selector{display:flex;overflow-x:auto;gap:0.5rem;justify-content:center;padding:0.5rem;}
+.city-selector button{
+  min-width:60px;padding:0.4rem 0.8rem;border:none;border-radius:20px;
+  background:rgba(255,255,255,0.2);color:#fff;cursor:pointer;font-size:0.9rem;
+  transition:var(--transition);
+}
+.city-selector button.active,
+.city-selector button:hover{background:rgba(255,255,255,0.4);}
+.container{display:flex;gap:1rem;padding:1rem;max-width:1200px;margin:auto;}
+.map-panel{flex:1 1 400px;min-width:260px;}
+.attractions-panel{flex:0 0 260px;min-width:200px;display:flex;flex-direction:column;}
+.attractions-panel .header-line{
+  font-weight:600;margin-bottom:0.5rem;padding:0.2rem;background:rgba(0,0,0,0.05);
+  border-radius:4px;
+}
+.attractions-list{
+  list-style:none;margin:0;padding:0;overflow-y:auto;max-height:calc(100vh - 200px);
+}
+.attractions-list li{
+  padding:0.6rem 0.8rem;border-bottom:1px solid #eee;display:flex;align-items:center;gap:0.5rem;cursor:pointer;
+}
+.attractions-list li:hover,
+.attractions-list li.active{background:rgba(0,0,0,0.03);}
+.detail-card{
+  position:fixed;inset:0;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;z-index:1000;
+  animation:fadeIn .3s;
+}
+.detail-card.show{display:flex;}
+.detail-card-content{
+  background:var(--card-bg);border-radius:12px;max-width:90%;width:320px;padding:1.5rem;box-shadow:0 4px 24px rgba(0,0,0,0.2);
+  position:relative;animation:slideUp .3s;
+}
+.close-btn{
+  position:absolute;top:.5rem;right:.5rem;background:none;border:none;font-size:1.5rem;cursor:pointer;
+}
+.category-chip{
+  display:inline-block;padding:.2rem .5rem;border-radius:12px;font-size:.8rem;background:#eee;margin-bottom:.5rem;
+}
+.rating{font-size:1.2rem;color:#f1c40f;margin-top:.5rem;}
+svg.city-map{width:100%;height:auto;display:block;background:#fff;border-radius:8px;}
+.pin{cursor:pointer;transition:transform .2s;}
+.pin:hover{transform:scale(1.3);}
+.pin.active{fill:var(--pin-active);}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:600px){
+  .container{flex-direction:column;}
+  .attractions-panel{order:-1;height:200px;}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>城市漫游 / City Explorer</h1>
+  <div class="city-selector" id="citySelector"></div>
+</header>
+<main class="container">
+  <section class="map-panel">
+    <svg class="city-map" id="cityMap" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet"></svg>
+  </section>
+  <section class="attractions-panel">
+    <div class="header-line" id="cityHeader"></div>
+    <ul class="attractions-list" id="attractionsList"></ul>
+  </section>
+</main>
+<div class="detail-card" id="detailCard" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+  <button class="close-btn" aria-label="Close details">&times;</button>
+  <h2 id="detailTitle"></h2>
+  <div class="detail-body">
+    <span class="category-chip"></span>
+    <p class="description"></p>
+    <div class="rating">★★★★☆</div>
+  </div>
+</div>
+
+<script>
+const cities = [
+  {
+    name:"北京",
+    en:"Beijing",
+    mapSVG:`
+      <rect width="400" height="300" fill="#f0e6d2"/>
+      <path d="M50,250 C150,50 250,350 350,100" stroke="#6b8e23" stroke-width="8" fill="none"/>
+      <rect x="80" y="200" width="60" height="40" fill="#a8dadc"/>
+      <rect x="260" y="120" width="50" height="50" fill="#a8dadc"/>
+    `,
+    attractions:[
+      {name:"故宫",en:"Forbidden City",desc:"中国明清两代的皇宫。",emoji:"🏯",category:"历史",x:200,y:120},
+      {name:"天安门广场",en:"Tiananmen Square",desc:"世界上最大的城市广场之一。",emoji:"🚩",category:"历史",x:210,y:150},
+      {name:"颐和园",en:"Summer Palace",desc:"皇家园林，湖光山色。",emoji:"🌳",category:"自然",x:150,y:80},
+      {name:"王府井",en:"Wangfujing",desc:"著名购物街和美食聚集地。",emoji:"🛍️",category:"美食",x:250,y:130},
+      {name:"798艺术区",en:"798 Art Zone",desc:"前卫艺术聚集地。",emoji:"🎨",category:"艺术",x:300,y:200},
+      {name:"鸟巢",en:"National Stadium",desc:"2008奥运会主体育场。",emoji:"🏟️",category:"艺术",x:350,y:250}
+    ]
+  },
+  {
+    name:"上海",
+    en:"Shanghai",
+    mapSVG:`
+      <rect width="400" height="300" fill="#e8f4fc"/>
+      <path d="M0,150 C100,100 300,200 400,150" stroke="#1e90ff" stroke-width="8" fill="none"/>
+      <rect x="50" y="200" width="70" height="50" fill="#a8dadc"/>
+      <rect x="280" y="100" width="60" height="60" fill="#a8dadc"/>
+    `,
+    attractions:[
+      {name:"外滩",en:"The Bund",desc:"上海标志性的滨水建筑群。",emoji:"🌉",category:"历史",x:50,y:150},
+      {name:"南京路",en:"Nanjing Road",desc:"繁华的购物街道。",emoji:"🛍️",category:"美食",x:200,y:120},
+      {name:"玉佛寺",en:"Jade Buddha Temple",desc:"供奉玉佛的古刹。",emoji:"🕍",category:"历史",x:100,y:250},
+      {name:"田子坊",en:"Tianzifang",desc:"充满艺术气息的弄堂。",emoji:"🎨",category:"艺术",x:300,y:200},
+      {name:"上海博物馆",en:"Shanghai Museum",desc:"馆藏丰富的古代艺术品。",emoji:"🏛️",category:"历史",x:200,y:200},
+      {name:"迪士尼乐园",en:"Disneyland",desc:"梦幻的主题乐园。",emoji:"🏰",category:"娱乐",x:350,y:100}
+    ]
+  },
+  {
+    name:"成都",
+    en:"Chengdu",
+    mapSVG:`
+      <rect width="400" height="300" fill="#fff0f5"/>
+      <path d="M50,200 C150,50 250,350 350,150" stroke="#ff69b4" stroke-width="8" fill="none"/>
+      <rect x="90" y="180" width="60" height="40" fill="#a8dadc"/>
+      <rect x="250" y="120" width="50" height="50" fill="#a8dadc"/>
+    `,
+    attractions:[
+      {name:"宽窄巷子",en:"Kuan-Zhai Alley",desc:"保存清代街巷的文化区。",emoji:"🏮",category:"历史",x:150,y:130},
+      {name:"杜甫草堂",en:"Du Fu Thatched Cottage",desc:"伟大诗人的故居。",emoji:"🏡",category:"历史",x:250,y:200},
+      {name:"成都大熊猫繁育基地",en:"Panda Base",desc:"可爱的国宝熊猫栖息地。",emoji:"🐼",category:"自然",x:100,y:80},
+      {name:"金沙遗址",en:"Jinsha Site",desc:"古蜀文明的重要遗址。",emoji:"⚱️",category:"历史",x:300,y:120},
+      {name:"武侯祠",en:"Wuhou Temple",desc:"纪念诸葛亮的庙宇。",emoji:"🛕",category:"历史",x:200,y:250},
+      {name:"天府广场",en:"Tianfu Square",desc:"成都的中心城市广场。",emoji:"🏙️",category:"艺术",x:200,y:160}
+    ]
+  },
+  {
+    name:"西安",
+    en:"Xi'an",
+    mapSVG:`
+      <rect width="400" height="300" fill="#f5f5dc"/>
+      <path d="M0,200 Q100,100 200,200 T400,200" stroke="#8b4513" stroke-width="8" fill="none"/>
+      <rect x="120" y="150" width="60" height="40" fill="#a8dadc"/>
+      <rect x="260" y="80" width="50" height="50" fill="#a8dadc"/>
+    `,
+    attractions:[
+      {name:"兵马俑",en:"Terracotta Warriors",desc:"秦始皇陵的壮丽陪葬军队。",emoji:"🗿",category:"历史",x:350,y:200},
+      {name:"大雁塔",en:"Giant Wild Goose Pagoda",desc:"唐代古塔，佛教圣地。",emoji:"🕌",category:"历史",x:100,y:150},
+      {name:"古城墙",en:"Ancient City Wall",desc:"完整保存的明城墙。",emoji:"🏯",category:"历史",x:200,y:50},
+      {name:"回民街",en:"Muslim Quarter",desc:"美食与文化交汇的老街。",emoji:"🥟",category:"美食",x:200,y:180},
+      {name:"大唐不夜城",en:"Tang Dynasty Nightless City",desc:"夜晚灯光璀璨的文化景区。",emoji:"🏮",category:"艺术",x:200,y:260},
+      {name:"陕西历史博物馆",en:"Shaanxi History Museum",desc:"陕西省的重要历史博物馆。",emoji:"🏛️",category:"历史",x:280,y:120}
+    ]
+  },
+  {
+    name:"巴黎",
+    en:"Paris",
+    mapSVG:`
+      <rect width="400" height="300" fill="#fdf5e6"/>
+      <path d="M50,200 C150,80 250,320 350,180" stroke="#ff8c00" stroke-width="8" fill="none"/>
+      <rect x="80" y="120" width="60" height="40" fill="#a8dadc"/>
+      <rect x="260" y="200" width="50" height="50" fill="#a8dadc"/>
+    `,
+    attractions:[
+      {name:"埃菲尔铁塔",en:"Eiffel Tower",desc:"巴黎的标志性铁塔。",emoji:"🗼",category:"艺术",x:80,y:200},
+      {name:"卢浮宫",en:"Louvre",desc:"世界最大的艺术博物馆。",emoji:"🖼️",category:"艺术",x:150,y:120},
+      {name:"诺特丹大教堂",en:"Notre-Dame",desc:"哥特式杰作的天主教堂。",emoji:"⛪",category:"历史",x:200,y:180},
+      {name:"蒙马特",en:"Montmartre",desc:"艺术家聚集的山丘。",emoji:"🎭",category:"艺术",x:300,y:80},
+      {name:"香榭丽舍大道",en:"Champs-Élysées",desc:"著名的购物林荫大道。",emoji:"🚶‍♂️",category:"美食",x:250,y:150},
+      {name:"奥赛博物馆",en:"Musée d'Orsay",desc:"印象派和后印象派作品收藏。",emoji:"🖼️",category:"艺术",x:180,y:250}
+    ]
+  },
+  {
+    name:"东京",
+    en:"Tokyo",
+    mapSVG:`
+      <rect width="400" height="300" fill="#e2e8f0"/>
+      <path d="M0,180 Q100,80 200,180 T400,180" stroke="#1c1c1c" stroke-width="8" fill="none"/>
+      <rect x="90" y="140" width="60" height="40" fill="#a8dadc"/>
+      <rect x="260" y="100" width="50" height="50" fill="#a8dadc"/>
+    `,
+    attractions:[
+      {name:"东京塔",en:"Tokyo Tower",desc:"红白相间的通信观光塔。",emoji:"🗼",category:"艺术",x:100,y:150},
+      {name:"浅草寺",en:"Senso-ji",desc:"东京最古老的佛教寺庙。",emoji:"🕌",category:"历史",x:80,y:250},
+      {name:"明治神宫",en:"Meiji Shrine",desc:"纪念明治天皇的神社。",emoji:"⛩️",category:"历史",x:120,y:80},
+      {name:"涩谷十字路口",en:"Shibuya Crossing",desc:"世界上最繁忙的人行交叉口。",emoji:"🚶‍♀️",category:"美食",x:200,y:180},
+      {name:"皇居",en:"Imperial Palace",desc:"日本天皇的居所。",emoji:"🏯",category:"历史",x:260,y:150},
+      {name:"teamLab Borderless",en:"teamLab Borderless",desc:"沉浸式数字艺术博物馆。",emoji:"🎨",category:"艺术",x:340,y:200}
+    ]
+  }
+];
+
+let currentCity = 0;
+let selectedAttraction = null;
+
+function renderCitySelector() {
+  const container = document.getElementById('citySelector');
+  container.innerHTML = '';
+  cities.forEach((city,i)=>{
+    const btn = document.createElement('button');
+    btn.textContent = `${city.name} / ${city.en}`;
+    btn.setAttribute('aria-label', `Select ${city.name}`);
+    if(i===0) btn.classList.add('active');
+    btn.addEventListener('click',()=>selectCity(i));
+    container.appendChild(btn);
+  });
+}
+function selectCity(index){
+  currentCity = index;
+  updateUI();
+}
+function updateUI(){
+  // update selector
+  document.querySelectorAll('.city-selector button').forEach((b,i)=>b.classList.toggle('active',i===currentCity));
+  // fade out panels
+  const mapPanel = document.querySelector('.map-panel');
+  const attPanel = document.querySelector('.attractions-panel');
+  mapPanel.style.opacity = '0';
+  attPanel.style.opacity = '0';
+  setTimeout(()=>{
+    renderMap();
+    renderAttractionsList();
+    updateCityHeader();
+    mapPanel.style.opacity = '';
+    attPanel.style.opacity = '';
+  },150);
+}
+function renderMap(){
+  const svg = document.getElementById('cityMap');
+  svg.innerHTML = cities[currentCity].mapSVG;
+  const pinColor = getComputedStyle(document.documentElement).getPropertyValue('--pin').trim();
+  cities[currentCity].attractions.forEach((attr,i)=>{
+    const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    circle.setAttribute('cx',attr.x);
+    circle.setAttribute('cy',attr.y);
+    circle.setAttribute('r','6');
+    circle.setAttribute('fill',pinColor);
+    circle.setAttribute('class','pin');
+    circle.setAttribute('data-index',i);
+    circle.setAttribute('role','button');
+    circle.setAttribute('aria-label',`${attr.name} (${attr.en})`);
+    circle.setAttribute('tabindex','0');
+    svg.appendChild(circle);
+    circle.addEventListener('click',()=>selectAttraction(i));
+    circle.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')selectAttraction(i);});
+  });
+}
+function renderAttractionsList(){
+  const ul = document.getElementById('attractionsList');
+  ul.innerHTML = '';
+  cities[currentCity].attractions.forEach((attr,i)=>{
+    const li = document.createElement('li');
+    li.textContent = `${attr.emoji} ${attr.name} / ${attr.en}`;
+    li.setAttribute('data-index',i);
+    li.setAttribute('role','button');
+    li.setAttribute('aria-label',`Attraction ${attr.name}`);
+    li.setAttribute('tabindex','0');
+    li.addEventListener('click',()=>selectAttraction(i));
+    li.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')selectAttraction(i);});
+    ul.appendChild(li);
+  });
+}
+function updateCityHeader(){
+  const header = document.getElementById('cityHeader');
+  const city = cities[currentCity];
+  header.textContent = `${city.name} · ${city.attractions.length} 处景点`;
+}
+function selectAttraction(index){
+  // clear previous highlights
+  document.querySelectorAll('.pin.active').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.attractions-list li.active').forEach(l=>l.classList.remove('active'));
+  // set new
+  const pin = document.querySelector(`.pin[data-index="${index}"]`);
+  if(pin) pin.classList.add('active');
+  const li = document.querySelector(`.attractions-list li[data-index="${index}"]`);
+  if(li){
+    li.classList.add('active');
+    li.scrollIntoView({block:'nearest'});
+  }
+  const attr = cities[currentCity].attractions[index];
+  document.getElementById('detailTitle').textContent = `${attr.name} / ${attr.en}`;
+  document.querySelector('.detail-card .category-chip').textContent = attr.category;
+  document.querySelector('.detail-card .description').textContent = attr.desc;
+  document.getElementById('detailCard').classList.add('show');
+}
+function closeDetail(){
+  document.getElementById('detailCard').classList.remove('show');
+  document.querySelectorAll('.pin.active').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.attractions-list li.active').forEach(l=>l.classList.remove('active'));
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  renderCitySelector();
+  selectCity(0);
+  const closeBtn = document.querySelector('.detail-card .close-btn');
+  closeBtn.addEventListener('click',closeDetail);
+  closeBtn.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ')closeDetail();});
+});
+</script>
+</body>
+</html>

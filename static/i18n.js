@@ -82,6 +82,14 @@
       "app.projects": "我的项目",
       "app.projects_empty_guest": "登录后即可保存并回看你的应用。",
       "app.projects_empty_none": "还没有应用，快生成一个吧！",
+      "app.project_pending": "生成中…",
+      "app.project_pending_meta": "正在保存新应用",
+
+      // featured showcase (public gallery)
+      "app.featured": "精选作品",
+      "app.featured_hint": "无需登录，点开即可预览",
+      "msg.featured_loaded": "已打开精选作品「{title}」。想改成自己的？直接在下面描述修改即可（登录后可保存为你的应用）。",
+      "msg.featured_open_fail": "无法打开这个精选作品，请稍后重试。",
 
       // version history + rollback
       "app.history": "版本历史",
@@ -206,6 +214,14 @@
       "app.projects": "My projects",
       "app.projects_empty_guest": "Log in to save & revisit your apps.",
       "app.projects_empty_none": "No apps yet — generate one!",
+      "app.project_pending": "Generating…",
+      "app.project_pending_meta": "Saving your new app",
+
+      // featured showcase (public gallery)
+      "app.featured": "Featured",
+      "app.featured_hint": "No login needed — click to preview",
+      "msg.featured_loaded": "Opened the featured app “{title}”. Want your own? Just describe a change below (log in to save it as your app).",
+      "msg.featured_open_fail": "Couldn't open this featured app, please try again.",
 
       // version history + rollback
       "app.history": "Version history",

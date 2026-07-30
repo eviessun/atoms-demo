@@ -1,0 +1,22 @@
+{
+  "projects": [
+    {
+      "slug": "pomodoro",
+      "title": "专注番茄钟",
+      "title_en": "Focus Pomodoro",
+      "description": "带圆环倒计时、任务清单与提示音的番茄工作法计时器。",
+      "description_en": "A Pomodoro timer with a circular countdown ring, task list, and chime.",
+      "provider": "Nemotron 3 Super 120B",
+      "file": "pomodoro.html"
+    },
+    {
+      "slug": "city-explorer",
+      "title": "城市漫游",
+      "title_en": "City Explorer",
+      "description": "按城市切换手绘地图与热门旅游景点，点击查看景点详情。",
+      "description_en": "Switch hand-drawn maps and top attractions by city; click a pin for details.",
+      "provider": "Nemotron 3 Super 120B",
+      "file": "city-explorer.html"
+    }
+  ]
+}

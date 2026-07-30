@@ -13,6 +13,9 @@ const modelSelect = document.getElementById("model-select");
 const authBox = document.getElementById("auth-box");
 const projectsList = document.getElementById("projects-list");
 const refreshBtn = document.getElementById("refresh-projects");
+// Featured showcase (public gallery guests can preview)
+const featuredBox = document.getElementById("featured");
+const featuredList = document.getElementById("featured-list");
 const langToggle = document.getElementById("lang-toggle");
 const modeLabel = document.getElementById("mode-label");
 const newAppBtn = document.getElementById("new-app");
@@ -59,6 +62,12 @@ let currentUser = null;
 // window before their session is confirmed on page load.
 let authReady = false;
 let lastProjects = [];       // cache so we can re-render on language change
+let lastFeatured = [];       // cache of the public showcase gallery (re-render on lang change)
+// While a brand-new app is being generated, this holds its prompt so the
+// projects list can show an optimistic "generating…" placeholder at the top
+// (the real row only appears after the model finishes + it's persisted). null
+// when nothing is pending. See renderProjects() and the composer submit handler.
+let pendingProjectTitle = null;
 let statusKey = "status.idle";
 let availableModels = [];    // [{id,label,free,transport,byok}] from /api/models
 const MODEL_STORE_KEY = "atoms:selectedModel";
@@ -327,11 +336,33 @@ function renderProjects(items) {
     projectsList.appendChild(li);
     return;
   }
-  if (!lastProjects.length) {
+  // Optimistic placeholder: a new app is only persisted once the model finishes,
+  // so the list would otherwise sit unchanged for the whole generation. Show a
+  // non-clickable "generating…" row at the top so the user gets instant feedback
+  // that their new app is on the way. Cleared once loadProjects() refreshes with
+  // the real row (or on failure). Re-rendered here so it survives a language
+  // switch or a manual refresh while generation is still in flight.
+  if (pendingProjectTitle != null) {
     const li = document.createElement("li");
-    li.className = "empty";
-    li.textContent = i18n.t("app.projects_empty_none");
+    li.className = "item pending";
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = pendingProjectTitle || i18n.t("app.project_pending");
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `⏳ ${i18n.t("app.project_pending_meta")}`;
+    li.append(title, meta);
     projectsList.appendChild(li);
+  }
+  if (!lastProjects.length) {
+    // With a pending placeholder already shown, an extra "no apps yet" row would
+    // contradict it — only show the empty hint when there's nothing at all.
+    if (pendingProjectTitle == null) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = i18n.t("app.projects_empty_none");
+      projectsList.appendChild(li);
+    }
     return;
   }
   for (const p of lastProjects) {
@@ -362,6 +393,75 @@ async function openProject(id) {
   showPreview(data.html);
   setStatus("status.ready");
   addMessage("assistant", i18n.t("msg.loaded", { id, prompt: data.prompt }));
+}
+
+// --- featured showcase (public) -----------------------------------------
+// A curated gallery served read-only from /api/featured. Anyone — including
+// guests — can browse and preview these, so it's the "see what this builds"
+// front door. Opening one loads it into the preview like a project but WITHOUT
+// a project_id, so a logged-in user can remix it (creating their own new app)
+// and a guest still hits the login gate on submit.
+
+// Pick the title/description for the current UI language (both variants ship
+// in the payload so switching languages needs no round trip).
+function featuredText(item) {
+  const en = i18n.getLang() === "en";
+  return {
+    title: (en ? item.title_en : item.title) || item.title || item.slug,
+    description: (en ? item.description_en : item.description) || item.description || "",
+  };
+}
+
+function renderFeatured(items) {
+  lastFeatured = items || [];
+  featuredList.innerHTML = "";
+  // Nothing to show (no manifest / empty gallery): hide the whole block so the
+  // panel doesn't carry a dangling header.
+  if (!lastFeatured.length) {
+    featuredBox.classList.add("hidden");
+    return;
+  }
+  featuredBox.classList.remove("hidden");
+  for (const item of lastFeatured) {
+    const { title, description } = featuredText(item);
+    const li = document.createElement("li");
+    li.className = "featured-item";
+    li.setAttribute("role", "button");
+    li.tabIndex = 0;
+    const h = document.createElement("div");
+    h.className = "featured-title";
+    h.textContent = title;
+    const p = document.createElement("div");
+    p.className = "featured-desc";
+    p.textContent = description;
+    const meta = document.createElement("div");
+    meta.className = "featured-meta";
+    meta.textContent = item.provider ? `✨ ${item.provider}` : "";
+    li.append(h, p, meta);
+    const open = () => openFeatured(item.slug);
+    li.onclick = open;
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+    featuredList.appendChild(li);
+  }
+}
+
+async function loadFeatured() {
+  const { ok, data } = await api("/api/featured");
+  renderFeatured(ok ? (data.featured || []) : []);
+}
+
+async function openFeatured(slug) {
+  const { ok, data } = await api(`/api/featured/${slug}`);
+  if (!ok) { addMessage("assistant", i18n.t("msg.featured_open_fail")); return; }
+  const { title } = featuredText(data);
+  // Load as the current app (no project_id) so it renders in the preview and
+  // can be remixed. currentHtml must be set for showPreview to reveal the iframe.
+  enterEditMode({ projectId: null, html: data.html, title });
+  showPreview(data.html);
+  setStatus("status.ready");
+  addMessage("assistant", i18n.t("msg.featured_loaded", { title }));
 }
 
 // --- version history + rollback -----------------------------------------
@@ -823,7 +923,14 @@ function afterGenerate({ prompt, editing, html, provider, projectId, iterated })
     saved = i18n.t(didEdit ? "msg.updated_suffix" : "msg.saved_suffix", { id: projectId });
   }
   addMessage("assistant", i18n.t(didEdit ? "msg.done_edit" : "msg.done", { provider, saved }));
-  if (projectId) loadProjects();
+  if (projectId) {
+    // Clear the optimistic placeholder before refreshing: loadProjects() will
+    // re-render with the real, persisted row. Clearing the flag (without an
+    // extra render here) lets the placeholder stay visible until the fetch
+    // resolves, so the real row replaces it seamlessly with no empty flash.
+    pendingProjectTitle = null;
+    loadProjects();
+  }
 }
 
 // Blocking generation — kept as a fallback for when the streaming endpoint is
@@ -1031,12 +1138,27 @@ composer.addEventListener("submit", async (e) => {
   promptEl.value = "";
   attachedImages = [];
   renderAttachments();
+  // For a brand-new app (createIdemKey set), show an optimistic placeholder in
+  // "My projects" right away — the real row won't exist until the model finishes
+  // and the project is persisted. Edits update an already-listed project, so
+  // they don't need one.
+  if (createIdemKey && currentUser) {
+    pendingProjectTitle = prompt;
+    renderProjects(lastProjects);
+  }
   try {
     await generateStream(prompt);
   } finally {
     generating = false;
     createIdemKey = null;
     pendingImages = [];
+    // Drop the placeholder. On success afterGenerate() already refreshed the
+    // list with the real row; on failure we re-render to remove the dangling
+    // placeholder. Either way, clear it and repaint from the cached list.
+    if (pendingProjectTitle != null) {
+      pendingProjectTitle = null;
+      renderProjects(lastProjects);
+    }
   }
 });
 
@@ -1234,6 +1356,7 @@ codeOpen.addEventListener("click", () => {
 window.addEventListener("langchange", () => {
   renderAuth();
   renderProjects(lastProjects);
+  renderFeatured(lastFeatured);
   renderModelOptions();
   renderMode();
   syncAttachButton();   // refresh the attach tooltip in the new language
@@ -1251,5 +1374,6 @@ window.addEventListener("langchange", () => {
   await loadByokPresets();
   await loadMe();
   restoreDraft();   // bring back a guest's stashed draft after they logged in
+  await loadFeatured();   // public showcase — visible to guests too
   await loadProjects();
 })();

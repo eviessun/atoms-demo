@@ -28,8 +28,18 @@
   </header>
 
   <main class="layout">
-    <!-- Left: saved projects -->
+    <!-- Left: featured showcase + saved projects -->
     <aside class="projects-panel">
+      <!-- Featured showcase: curated example apps anyone (incl. guests) can
+           preview. Populated by JS from /api/featured; the whole block hides
+           itself when the gallery is empty. -->
+      <div class="featured" id="featured">
+        <div class="featured-head">
+          <span data-i18n="app.featured">精选作品</span>
+          <span class="featured-hint" data-i18n="app.featured_hint">无需登录，点开即可预览</span>
+        </div>
+        <ul class="featured-list" id="featured-list"></ul>
+      </div>
       <div class="projects-head">
         <span data-i18n="app.projects">我的项目</span>
         <button id="refresh-projects" title="Refresh" class="icon-btn">⟳</button>
