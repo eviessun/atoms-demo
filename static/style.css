@@ -831,3 +831,88 @@ iframe {
 }
 
 .hidden { display: none !important; }
+
+/* ======================================================================
+   Responsive adaptation
+   The base layout is a 5-column desktop grid (projects | resizer | chat |
+   resizer | preview) with drag-resizers. It only assumes a wide viewport, so
+   below we (1) tighten the side columns on small laptops, and (2) collapse to
+   a single scrollable column on phones/tablets. The resizer JS only ever sets
+   the --projects-w / --preview-w vars, never grid-template-columns itself, so
+   redefining the grid here reliably wins regardless of any saved drag sizes.
+   ====================================================================== */
+
+/* Small laptops / landscape tablets: keep the grid but shrink the side panes
+   so the flexible chat column keeps a usable width. */
+@media (max-width: 1080px) {
+  .layout {
+    --projects-w: 200px;
+    --preview-w: 340px;
+  }
+  .model-picker select { max-width: 160px; }
+}
+
+/* Phones / portrait tablets: abandon the multi-column grid entirely and stack
+   everything into one vertically-scrolling column. Drag-resizers are hidden
+   (touch can't use them); each panel gets an explicit height so it stays
+   usable, and the page itself scrolls. */
+@media (max-width: 860px) {
+  /* Topbar: let the controls wrap onto extra rows instead of overflowing. */
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 8px 14px;
+  }
+  .topbar-right {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    row-gap: 8px;
+  }
+  .model-picker-label { display: none; }      /* save width; the select is self-explanatory */
+  .model-picker select { max-width: 150px; }
+  .auth-box .who {
+    max-width: 40vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The layout stops being a grid and becomes a scrollable vertical stack. */
+  .layout {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Drag dividers are meaningless once stacked. */
+  .resizer, .resizer-h { display: none !important; }
+
+  /* Projects: a compact, internally-scrolling strip at the top. */
+  .projects-panel {
+    flex: none;
+    max-height: 160px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Chat + preview each take a comfortable share of the viewport height and
+     keep their own internal scroll (messages / iframe). */
+  .chat-panel {
+    flex: none;
+    min-height: 65vh;
+  }
+  .preview-panel {
+    flex: none;
+    min-height: 75vh;
+    border-top: 1px solid var(--border);
+  }
+  /* On the phone stack the composer no longer needs a large fixed height. */
+  .composer { --composer-h: 132px; }
+}
+
+/* Very small phones: trim paddings and font sizes a touch more. */
+@media (max-width: 480px) {
+  .topbar { padding: 8px 10px; }
+  .brand span:not(.logo) { font-size: 0.95rem; }
+  .msg { font-size: 0.9rem; }
+  .model-picker select { max-width: 120px; }
+}
