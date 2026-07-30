@@ -68,6 +68,18 @@ let currentTitle = "";       // first prompt / project name, shown in the edit b
 // synchronously on submit (before any await), so re-entrant submits are dropped.
 let generating = false;
 
+// Idempotency key for the in-flight CREATE. Minted once per create submit and
+// sent to the server, which ties all copies of that one request to a single
+// project (see db.create_project). Belt-and-suspenders with `generating`: the
+// flag stops double-submits in this tab; the key stops transport-level dupes
+// (dropped response + replay, proxy retry) from forking a second project.
+let createIdemKey = null;
+
+function newIdemKey() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return `idem-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function addMessage(role, text) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
@@ -530,6 +542,10 @@ function composeBody(prompt, editing) {
     // Guest -> send the current html so it can still be edited client-side.
     if (currentProjectId != null) body.project_id = currentProjectId;
     else body.base_html = currentHtml;
+  } else if (createIdemKey) {
+    // Create: carry the idempotency key so a retry/replay of this one request
+    // resolves to the same project instead of forking a duplicate.
+    body.idempotency_key = createIdemKey;
   }
   return body;
 }
@@ -744,12 +760,27 @@ composer.addEventListener("submit", async (e) => {
   const prompt = promptEl.value.trim();
   if (!prompt) return;
   generating = true;
+  // Mint one idempotency key per CREATE submit (edits update a known project,
+  // so they don't need one). Kept stable across a stream->blocking fallback so
+  // that retry still maps to the same project server-side.
+  createIdemKey = currentHtml == null ? newIdemKey() : null;
   addMessage("user", prompt);
   promptEl.value = "";
   try {
     await generateStream(prompt);
   } finally {
     generating = false;
+    createIdemKey = null;
+  }
+});
+
+// Enter submits the composer; Shift+Enter (and IME composition) still insert a
+// newline. Mirrors the common chat-input convention so users don't have to
+// reach for the button.
+promptEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    composer.requestSubmit();
   }
 });
 

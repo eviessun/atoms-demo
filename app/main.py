@@ -55,6 +55,11 @@ class GenerateRequest(BaseModel):
     #  - base_html: for guests (no saved project) — the current app HTML to edit.
     project_id: int | None = None
     base_html: str | None = None
+    # Idempotency: a client-generated key that ties all retries of ONE create
+    # action together. Two requests with the same key (a double-submit, a retry
+    # after a dropped response) resolve to the same project instead of forking a
+    # duplicate. Only meaningful for create (no project_id); ignored on iterate.
+    idempotency_key: str | None = None
 
 
 class AuthRequest(BaseModel):
@@ -164,16 +169,18 @@ class _Resolved:
     streaming endpoints. `error` is a JSONResponse to return immediately; when
     it's None the other fields are ready to feed the model + persistence."""
 
-    __slots__ = ("error", "prompt", "user", "base_html", "target_project", "byok_spec")
+    __slots__ = ("error", "prompt", "user", "base_html", "target_project", "byok_spec",
+                 "idempotency_key")
 
     def __init__(self, error=None, prompt="", user=None, base_html=None,
-                 target_project=None, byok_spec=None):
+                 target_project=None, byok_spec=None, idempotency_key=None):
         self.error = error
         self.prompt = prompt
         self.user = user
         self.base_html = base_html
         self.target_project = target_project
         self.byok_spec = byok_spec
+        self.idempotency_key = idempotency_key
 
 
 def _resolve_generate(req: "GenerateRequest", request: Request) -> _Resolved:
@@ -218,18 +225,25 @@ def _resolve_generate(req: "GenerateRequest", request: Request) -> _Resolved:
             return _Resolved(error=JSONResponse(status_code=400, content={"error": "请填写 API 地址（base URL）"}))
 
     return _Resolved(prompt=prompt, user=user, base_html=base_html,
-                     target_project=target_project, byok_spec=byok_spec)
+                     target_project=target_project, byok_spec=byok_spec,
+                     idempotency_key=(req.idempotency_key or "").strip() or None)
 
 
 def _persist_generation(r: _Resolved, html: str, provider: str) -> tuple[int | None, bool]:
     """Save a finished generation. Updates a saved project in place when
     iterating, else creates a new one for logged-in users. Guests get nothing
-    persisted. Returns (project_id, iterated)."""
+    persisted. Returns (project_id, iterated).
+
+    Create is idempotent when the request carried an idempotency_key: a retry or
+    double-submit with the same key resolves to the original project instead of
+    forking a duplicate (see db.create_project)."""
     if r.target_project is not None:
         db.update_project_html(r.user["id"], r.target_project["id"], r.prompt, html, provider)
         return r.target_project["id"], True
     if r.user is not None:
-        return db.create_project(r.user["id"], r.prompt, html, provider), False
+        return db.create_project(
+            r.user["id"], r.prompt, html, provider, r.idempotency_key
+        ), False
     return None, False
 
 

@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# Test discovery + defaults. Run the suite with:  pytest
+# (see requirements-dev.txt for the pytest install).
+testpaths = ["tests"]
+addopts = "-q"

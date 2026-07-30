@@ -44,6 +44,14 @@ if IS_POSTGRES:
     import psycopg
     from psycopg.rows import dict_row
 
+# Exceptions a UNIQUE constraint raises, per backend. Used to make idempotent
+# project creation race-safe: if two concurrent requests carry the same
+# idempotency key, one insert wins and the other trips the unique index — we
+# catch that and return the winner's row instead of erroring.
+_UNIQUE_ERRORS: tuple = (sqlite3.IntegrityError,)
+if IS_POSTGRES:
+    _UNIQUE_ERRORS = _UNIQUE_ERRORS + (psycopg.errors.UniqueViolation,)
+
 
 # --- schema (per-backend dialect differences) ---------------------------
 
@@ -66,9 +74,14 @@ CREATE TABLE IF NOT EXISTS projects (
     prompt     TEXT NOT NULL,
     html       TEXT NOT NULL,
     provider   TEXT NOT NULL,
+    idempotency_key TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
+-- NOTE: the unique index on (user_id, idempotency_key) is created in
+-- _migrate_add_idempotency_key(), NOT here — on a legacy DB the projects table
+-- already exists without the column, so indexing it inline would fail before
+-- the ALTER TABLE runs.
 CREATE TABLE IF NOT EXISTS project_versions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,
@@ -99,8 +112,13 @@ CREATE TABLE IF NOT EXISTS projects (
     prompt     TEXT NOT NULL,
     html       TEXT NOT NULL,
     provider   TEXT NOT NULL,
+    idempotency_key TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- NOTE: the unique index on (user_id, idempotency_key) is created in
+-- _migrate_add_idempotency_key(), NOT here — on a legacy DB the projects table
+-- already exists without the column, so indexing it inline would fail before
+-- the ALTER TABLE runs.
 CREATE TABLE IF NOT EXISTS project_versions (
     id         BIGSERIAL PRIMARY KEY,
     project_id BIGINT NOT NULL REFERENCES projects(id),
@@ -176,8 +194,46 @@ def init_db() -> None:
                 cur.execute(schema)
         else:
             conn.executescript(schema)
+    # Migrate pre-existing tables that predate a column (CREATE TABLE IF NOT
+    # EXISTS won't add columns to a table that already exists).
+    _migrate_add_idempotency_key()
     # Give any pre-versioning projects an initial snapshot (idempotent).
     backfill_versions()
+
+
+def _migrate_add_idempotency_key() -> None:
+    """Ensure projects.idempotency_key + its unique index exist, then create the
+    index. Runs on every startup and is idempotent:
+
+      * Fresh DB: the column came from CREATE TABLE above; ADD COLUMN is a no-op
+        (guarded), and we create the index.
+      * Legacy DB (table predates the column): CREATE TABLE IF NOT EXISTS left
+        it untouched, so we ALTER TABLE ADD COLUMN, THEN create the index.
+
+    The index is created here (not in the schema DDL) precisely because on a
+    legacy table it must come after the ALTER — indexing a missing column fails.
+
+    Unique on (user_id, idempotency_key): a retried/duplicated create with the
+    same key can't fork a second project. NULL keys are exempt (each NULL is
+    distinct in both engines), so keyless creates are unaffected."""
+    with get_conn() as conn:
+        if IS_POSTGRES:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS idempotency_key TEXT"
+                )
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_idem "
+                    "ON projects(user_id, idempotency_key)"
+                )
+        else:
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(projects)")}
+            if "idempotency_key" not in cols:
+                conn.execute("ALTER TABLE projects ADD COLUMN idempotency_key TEXT")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_idem "
+                "ON projects(user_id, idempotency_key)"
+            )
 
 
 # --- users ---------------------------------------------------------------
@@ -227,22 +283,55 @@ def delete_session(token: str) -> None:
 
 # --- projects ------------------------------------------------------------
 
-def create_project(user_id: int, prompt: str, html: str, provider: str) -> int:
+def create_project(
+    user_id: int, prompt: str, html: str, provider: str,
+    idempotency_key: str | None = None,
+) -> int:
     """Create a project and record its first version snapshot in one
     transaction. projects.html is the 'current' state; project_versions is the
-    append-only history that powers rollback."""
+    append-only history that powers rollback.
+
+    Idempotent when `idempotency_key` is given: a duplicate/retried create with
+    the same (user_id, key) never forks a second project — we return the id of
+    the row that already exists. Concurrent creates race on the unique index;
+    the loser catches the violation and reads back the winner's id. A NULL key
+    opts out (each NULL is distinct), preserving the old keyless behavior."""
+    if idempotency_key:
+        existing = get_project_by_idem(user_id, idempotency_key)
+        if existing is not None:
+            return int(existing["id"])
+    try:
+        with get_conn() as conn:
+            project_id = _insert_returning_id(
+                conn,
+                "INSERT INTO projects (user_id, prompt, html, provider, idempotency_key) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, prompt, html, provider, idempotency_key),
+            )
+            _execute(
+                conn,
+                "INSERT INTO project_versions (project_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
+                (project_id, prompt, html, provider),
+            )
+            return project_id
+    except _UNIQUE_ERRORS:
+        # Lost a concurrent race on the same key — the winner already inserted.
+        if idempotency_key:
+            existing = get_project_by_idem(user_id, idempotency_key)
+            if existing is not None:
+                return int(existing["id"])
+        raise
+
+
+def get_project_by_idem(user_id: int, idempotency_key: str) -> Optional[Any]:
+    """Look up a project by its (user, idempotency_key). Used to dedupe repeated
+    create requests so a retry/double-submit returns the original project."""
     with get_conn() as conn:
-        project_id = _insert_returning_id(
+        return _fetchone(
             conn,
-            "INSERT INTO projects (user_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
-            (user_id, prompt, html, provider),
+            "SELECT * FROM projects WHERE user_id = ? AND idempotency_key = ?",
+            (user_id, idempotency_key),
         )
-        _execute(
-            conn,
-            "INSERT INTO project_versions (project_id, prompt, html, provider) VALUES (?, ?, ?, ?)",
-            (project_id, prompt, html, provider),
-        )
-        return project_id
 
 
 def list_projects(user_id: int) -> list:
@@ -273,25 +362,28 @@ def update_project_html(user_id: int, project_id: int, prompt: str, html: str, p
     includes user_id so a user can only modify their own project. Returns True
     if a row was updated, False if not found / not owned.
 
-    `prompt` records the latest change request and `provider` the model that
-    produced this revision. The projects row holds the newest state (shown in
-    the list); every revision is preserved in project_versions for rollback."""
+    `projects.prompt` is the project's TITLE — the user's first request — and is
+    intentionally NOT touched here, so the list/banner keep showing what the app
+    was originally created to be, not the latest tweak ("make the button blue").
+    The per-iteration `prompt` is recorded on the version snapshot instead, where
+    it belongs (that's the history/rollback timeline). `provider` on the project
+    row tracks the model behind the current state and is updated."""
     with get_conn() as conn:
         if IS_POSTGRES:
             with conn.cursor() as cur:
                 cur.execute(
                     _q(
-                        "UPDATE projects SET prompt = ?, html = ?, provider = ? "
+                        "UPDATE projects SET html = ?, provider = ? "
                         "WHERE id = ? AND user_id = ?"
                     ),
-                    (prompt, html, provider, project_id, user_id),
+                    (html, provider, project_id, user_id),
                 )
                 updated = cur.rowcount > 0
         else:
             cur = conn.execute(
-                "UPDATE projects SET prompt = ?, html = ?, provider = ? "
+                "UPDATE projects SET html = ?, provider = ? "
                 "WHERE id = ? AND user_id = ?",
-                (prompt, html, provider, project_id, user_id),
+                (html, provider, project_id, user_id),
             )
             updated = cur.rowcount > 0
         if updated:
