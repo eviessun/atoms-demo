@@ -631,7 +631,12 @@ async function openProject(id) {
   enterEditMode({ projectId: id, html: data.html, title: data.prompt });
   showPreview(data.html);
   setStatus("status.ready");
-  addMessage("assistant", i18n.t("msg.loaded", { id, prompt: data.prompt }));
+  // Same dedupe treatment as the featured "opened…" notice: clicking a saved
+  // project several times in a row (or bouncing between saved projects) just
+  // swaps the title in place instead of stacking N identical bubbles. An
+  // intervening real message (a generate/iterate exchange, opening a featured,
+  // etc.) breaks the collapse so the next open starts a fresh bubble.
+  upsertTaggedMessage("assistant", i18n.t("msg.loaded", { id, prompt: data.prompt }), "project-loaded");
 }
 
 // --- featured showcase (public) -----------------------------------------
