@@ -37,6 +37,9 @@ class ModelSpec:
     model:       the model name passed to the provider's API
     api_key_env: env var that holds this model's API key ("" for keyless mock)
     free:        whether this is a no-cost option (badge hint in the UI)
+    hidden:      keep it selectable/resolvable server-side but off the UI dropdown
+                 (e.g. mock stays as the fallback/degrade target without being an
+                 offered choice — see available_models() and default_model_id()).
     """
     id: str
     label: str
@@ -45,6 +48,7 @@ class ModelSpec:
     base_url: str = ""
     api_key_env: str = ""
     free: bool = False
+    hidden: bool = False
     # BYOK ("bring your own key"): a placeholder entry the UI always offers. The
     # real transport/model/base_url/key arrive per-request from the browser and
     # are used transiently — never read from the environment, never persisted.
@@ -77,6 +81,10 @@ MODEL_REGISTRY: list[ModelSpec] = [
         label="Mock (no key)",
         transport="mock",
         free=True,
+        # Kept as the always-available fallback/degrade target (see llm.py) and
+        # the offline test/dev default, but hidden from the UI dropdown so users
+        # only see real models. Still resolvable via get_model("mock").
+        hidden=True,
     ),
     # --- BYOK: user brings their own key, entered in the browser -------------
     # Always offered. The key/model/base_url arrive with each request and are
@@ -125,9 +133,20 @@ MODEL_REGISTRY: list[ModelSpec] = [
         api_key_env="MOONSHOT_API_KEY",
     ),
     # --- OpenRouter free tier — genuinely $0 (great for demos) ---------------
-    # NOTE: OpenRouter rotates/retires free slugs often. These were verified
-    # against the live /models list; if one 404s ("unavailable for free"),
-    # check https://openrouter.ai/models?max_price=0 for a current slug.
+    # Verified live against OpenRouter's /models list. If a slug ever 404s
+    # ("unavailable for free"), grab a current one from
+    # https://openrouter.ai/models?max_price=0.
+    # Nano 30B leads the group: it's the fastest/most-stable free slug in
+    # testing, so it's both the top dropdown pick and the auto-selected default.
+    ModelSpec(
+        id="openrouter-nemotron-nano-free",
+        label="Nemotron 3 Nano 30B",
+        transport="openai",
+        model="nvidia/nemotron-3-nano-30b-a3b:free",
+        base_url="https://openrouter.ai/api/v1",
+        api_key_env="OPENROUTER_API_KEY",
+        free=True,
+    ),
     ModelSpec(
         id="openrouter-nemotron-free",
         label="Nemotron 3 Super 120B",
@@ -164,15 +183,6 @@ MODEL_REGISTRY: list[ModelSpec] = [
         api_key_env="OPENROUTER_API_KEY",
         free=True,
     ),
-    ModelSpec(
-        id="openrouter-nemotron-nano-free",
-        label="Nemotron 3 Nano 30B",
-        transport="openai",
-        model="nvidia/nemotron-3-nano-30b-a3b:free",
-        base_url="https://openrouter.ai/api/v1",
-        api_key_env="OPENROUTER_API_KEY",
-        free=True,
-    ),
     # --- Generic OpenAI-compatible (OpenAI / Groq / local / custom) ----------
     # Driven by the classic OPENAI_* vars, so existing setups keep working.
     ModelSpec(
@@ -204,8 +214,10 @@ def get_model(model_id: str | None) -> ModelSpec | None:
 
 
 def available_models() -> list[ModelSpec]:
-    """Models the UI should offer: those with a configured key, plus keyless mock."""
-    return [m for m in MODEL_REGISTRY if m.available]
+    """Models the UI should offer: those with a configured key, minus any
+    marked `hidden` (e.g. mock, which stays as a server-side fallback but isn't
+    an offered choice)."""
+    return [m for m in MODEL_REGISTRY if m.available and not m.hidden]
 
 
 # BYOK presets shown in the "自定义（自备 Key）" dialog. Each fills in the
@@ -282,14 +294,26 @@ class Settings:
     APP_NAME: str = "Atoms Demo"
 
     def default_model_id(self) -> str:
-        """Resolve the startup default: explicit DEFAULT_MODEL_ID wins; else map
-        a legacy LLM_PROVIDER; else the first available model; else mock."""
-        if get_model(self.DEFAULT_MODEL_ID) is not None:
-            return self.DEFAULT_MODEL_ID
-        if self.LLM_PROVIDER in _REGISTRY_BY_ID:
-            return self.LLM_PROVIDER
-        avail = available_models()
-        return avail[0].id if avail else "mock"
+        """Resolve the startup default the UI should preselect.
+
+        Prefer an explicit DEFAULT_MODEL_ID (or legacy LLM_PROVIDER) when it
+        names a model that's actually offered — available AND not hidden.
+        Otherwise fall to the first offered model. Only when nothing is offered
+        (no keys set, e.g. tests / offline dev) do we return the hidden `mock`,
+        so the app still works out of the box.
+
+        This is why prod stops defaulting to mock even if its DEFAULT_MODEL_ID
+        env var still says "mock": mock is hidden, so once a real key is set the
+        default auto-advances to a real model — no env-var edit required."""
+        for candidate in (self.DEFAULT_MODEL_ID, self.LLM_PROVIDER):
+            spec = get_model(candidate)
+            if spec is not None and spec.available and not spec.hidden and not spec.byok:
+                return candidate
+        # First real, ready-to-use model: skip BYOK (needs user-supplied creds).
+        for m in available_models():
+            if not m.byok:
+                return m.id
+        return "mock"
 
 
 settings = Settings()

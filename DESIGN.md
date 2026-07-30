@@ -209,9 +209,13 @@ response:
 
 **`GET /api/models`** — response（**绝不含 key**）:
 ```jsonc
-{ "models": [ { "id": "mock", "label": "Mock (no key)", "free": true, "transport": "mock" } ],
-  "default": "mock" }
+{ "models": [ { "id": "openrouter-nemotron-nano-free", "label": "Nemotron 3 Nano 30B",
+                "free": true, "transport": "openai", "byok": false } ],
+  "default": "openrouter-nemotron-nano-free" }
 ```
+注：只列**已配置 key** 的模型 + 常驻的 `byok`；keyless 的 `mock` 被标记 `hidden`，
+不在下拉里出现，但仍作为服务端兜底/降级目标存在。`default` 也不会落在 `mock` 上——
+一旦有真实模型可用，就自动选中第一个（见 `default_model_id()`）。
 
 **中文**：错误以 `{"error": "..."}` + 恰当 HTTP 码返回（400 参数、401 未登录、404 找不到/
 越权、409 邮箱已注册、502 生成失败）。
@@ -285,7 +289,9 @@ generation failed).
   `projects.html` 始终指向“当前”版本；回滚是**非破坏性**的（回滚本身也记为新版本，历史永不截断）。
 - 生成走 **SSE 流式**（实时展示推理过程与代码逐字写出）；mock / 非流式传输则用分块模拟动画。
 - 生成的应用可**导出**：下载单文件 `index.html`、复制源码、或在新标签页真机运行（脱离沙箱 iframe）。
-- 线上默认仍是 `mock`，接真实免费模型只需在 Render 配一个 key + `DEFAULT_MODEL_ID`，无需改码。
+- 线上默认走一个真实免费模型（OpenRouter Nemotron Nano 30B）；`mock` 被标 `hidden`，
+  只当兜底/降级目标，不出现在下拉里。配好 `OPENROUTER_API_KEY` 后默认会自动指向真实模型，
+  无需改码、也无需再动 `DEFAULT_MODEL_ID` 环境变量。
 - 免费档休眠 + 冷启动是平台限制，靠保活 ping 缓解。
 
 **English**
@@ -297,6 +303,8 @@ generation failed).
   non-streaming transports fall back to a chunked simulated animation.
 - The generated app can be **exported**: download the single `index.html`, copy the
   source, or open it in a new tab to run it standalone (outside the sandboxed iframe).
-- Prod still defaults to `mock`; switching to a real free model is just a Render env
-  var (`OPENROUTER_API_KEY` + `DEFAULT_MODEL_ID`) — no code change.
+- Prod defaults to a real free model (OpenRouter Nemotron Nano 30B); `mock` is
+  marked `hidden` — kept only as the fallback/degrade target, never shown in the
+  dropdown. Once `OPENROUTER_API_KEY` is set the default auto-advances to a real
+  model — no code change and no need to touch the `DEFAULT_MODEL_ID` env var.
 - Free-tier sleep + cold start is a platform limit, mitigated by the keep-alive ping.

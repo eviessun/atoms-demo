@@ -27,6 +27,46 @@ Atoms / v0 / bolt.new。
 
 ---
 
+## 架构
+
+三栏式单页前端（无构建步骤）对接 FastAPI 后端，后端负责认证、LLM 适配器和双后端
+数据存储。同一条生成链路同时提供**阻塞式**接口和 **SSE 流式**孪生接口。
+
+```mermaid
+flowchart LR
+    subgraph Browser["浏览器 — 静态 SPA（无构建）"]
+        UI["index.html · app.js<br/>项目 · 对话 · 沙箱 &lt;iframe&gt; 预览"]
+    end
+    subgraph Server["FastAPI (app/)"]
+        API["main.py<br/>认证 · 生成 · 项目 · 版本"]
+        AUTH["auth.py<br/>PBKDF2 + cookie 会话"]
+        LLM["llm.py + config.py<br/>模型注册表 · mock / OpenAI / Anthropic"]
+        API --- AUTH
+        API --- LLM
+    end
+    subgraph Data["持久化 (db.py)"]
+        PG[("PostgreSQL — Neon<br/>（线上）")]
+        SQLITE[("SQLite<br/>（本地）")]
+    end
+    Providers["LLM 提供方<br/>OpenRouter · DeepSeek · 豆包 · …"]
+
+    UI -- "POST /api/generate(/stream)" --> API
+    UI -- "cookie 会话" --> AUTH
+    LLM -. "OpenAI 兼容 / Anthropic" .-> Providers
+    API -- "配了 DATABASE_URL？" --> PG
+    API -- "否则" --> SQLITE
+```
+
+**请求链路 —— 生成 → 持久化 → 迭代：**
+
+1. 浏览器把 prompt POST 到 `/api/generate`（或流式的 `/api/generate/stream`，
+   实时展示推理 + 代码）。每次新建都带一个**幂等键**，让重试/重放不会分叉出重复项目。
+2. `main.py` 校验并解析归属，`llm.py` 调用所选模型（key 只留服务端；`mock` 无需 key）。
+3. 结果通过 `db.py` 存为一个项目 **外加一条 append-only 版本快照**；响应带回 `project_id`。
+4. 后续对话在该 `project_id` 上**原地迭代** —— 服务端加载权威的当前 HTML，客户端无法伪造 base。
+
+---
+
 ## 技术栈
 
 - **后端：** FastAPI（Python 3.12），uvicorn 运行
@@ -60,10 +100,12 @@ atoms-demo/
 │  └─ style.css / login.css
 ├─ scripts/
 │  └─ test_db_backend.py   # 数据库后端端到端自检（users/sessions/projects）
+├─ tests/           # pytest 测试套件：认证 · 生成 · 权限隔离 · 版本 · 幂等
 ├─ .github/workflows/keep-alive.yml   # 定时 ping /api/health 保活免费实例
 ├─ render.yaml      # Render 蓝图（Python 3.12、环境变量、健康检查）
 ├─ .python-version  # 3.12.7 —— 规避 Render 用 Python 3.14 导致的 wheel/编译问题
 ├─ requirements.txt
+├─ requirements-dev.txt   # 额外含 pytest，用于跑测试套件
 ├─ .env.example     # 单模型快速上手
 └─ .env.multi-model.example   # 一次性配置所有 provider
 ```
@@ -84,11 +126,32 @@ uvicorn app.main:app --reload --port 8123
 
 ---
 
+## 测试
+
+一套 `pytest` 端到端覆盖后端，全程离线（用 `mock` 模型、每个用例独立的临时 SQLite
+文件 —— 绝不碰 Neon，也不走网络）：
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+| 范围 | 覆盖内容 |
+| --- | --- |
+| **认证** | 注册/登录/登出、非法邮箱与短密码、重复邮箱、密码错误、会话 `me` |
+| **生成** | prompt 必填、游客拿到 HTML 但不持久化、登录后新建持久化、原地迭代 |
+| **权限隔离** | 用户无法读取/迭代/列出他人项目的版本（404，不泄露存在性） |
+| **版本** | 新建+迭代后历史增长、快照 HTML 获取、**非破坏性回滚**（回滚追加为新版本） |
+| **幂等** | 相同 key → 一个项目；不同 key → 各自独立；无 key → 旧行为；key 按用户隔离 |
+
+---
+
 ## 选择模型（Trae 风格下拉）
 
 不写死单一 provider，而是维护一个可选模型的**注册表**（`app/config.py` 里的
 `MODEL_REGISTRY`）。界面显示一个下拉框；**只有配置了对应 API key 环境变量的模型才会出现**
-（keyless 的 `mock` 始终在）。API key 永远不出服务端 —— 浏览器只发送 model `id`
+（外加常驻的 BYOK 项）。keyless 的 `mock` 被标记 `hidden`——保留为服务端兜底，但不作为可选项
+出现在下拉里。API key 永远不出服务端 —— 浏览器只发送 model `id`
 （如 `deepseek-chat`），服务端再根据 id 读取对应的 key。
 
 把 `.env.example`（或 `.env.multi-model.example`）复制成 `.env`，只填你要用的：
@@ -164,7 +227,7 @@ DeepSeek、豆包、Kimi、OpenRouter、OpenAI 都复用同一个 OpenAI 兼容�
 | POST | `/api/auth/login` | 登录，下发会话 cookie |
 | POST | `/api/auth/logout` | 退出登录 |
 | GET | `/api/auth/me` | 当前用户（或 null） |
-| POST | `/api/generate` | 生成新应用，或在已有应用上迭代（`project_id` / `base_html`） |
+| POST | `/api/generate` | 生成新应用，或在已有应用上迭代（`project_id` / `base_html`）；新建按可选 `idempotency_key` 去重 |
 | GET | `/api/projects` | 当前用户保存的应用 |
 | GET | `/api/projects/{id}` | 单个应用（限本人） |
 | GET | `/api/projects/{id}/versions` | 某项目的版本快照（最新在前，限本人） |
@@ -187,6 +250,8 @@ DeepSeek、豆包、Kimi、OpenRouter、OpenAI 都复用同一个 OpenAI 兼容�
 - [x] 流式生成（SSE —— 实时展示推理过程与代码逐字写出）
 - [x] 每个项目的版本历史 + 非破坏性回滚
 - [x] 导出生成的应用 —— 下载 `index.html`、复制源码、新标签页打开运行
+- [x] 服务端幂等新建 —— 重试/重放不会分叉出重复项目
+- [x] pytest 测试套件 —— 认证 · 生成 · 权限隔离 · 版本 · 幂等（离线）
 
 ## 安全说明
 

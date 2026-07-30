@@ -28,6 +28,51 @@ of the box with **no API key** via a keyless `mock` model.
 
 ---
 
+## Architecture
+
+Three-panel single-page frontend (no build step) talks to a FastAPI backend,
+which owns auth, the LLM adapter, and a dual-backend datastore. The same
+generate path serves a **blocking** endpoint and an **SSE streaming** twin.
+
+```mermaid
+flowchart LR
+    subgraph Browser["Browser — static SPA (no build)"]
+        UI["index.html · app.js<br/>projects · chat · sandboxed &lt;iframe&gt; preview"]
+    end
+    subgraph Server["FastAPI (app/)"]
+        API["main.py<br/>auth · generate · projects · versions"]
+        AUTH["auth.py<br/>PBKDF2 + cookie sessions"]
+        LLM["llm.py + config.py<br/>model registry · mock / OpenAI / Anthropic"]
+        API --- AUTH
+        API --- LLM
+    end
+    subgraph Data["Persistence (db.py)"]
+        PG[("PostgreSQL — Neon<br/>(prod)")]
+        SQLITE[("SQLite<br/>(local)")]
+    end
+    Providers["LLM providers<br/>OpenRouter · DeepSeek · Doubao · …"]
+
+    UI -- "POST /api/generate(/stream)" --> API
+    UI -- "cookie session" --> AUTH
+    LLM -. "OpenAI-compatible / Anthropic" .-> Providers
+    API -- "DATABASE_URL set?" --> PG
+    API -- "else" --> SQLITE
+```
+
+**Request flow — generate → persist → iterate:**
+
+1. Browser POSTs a prompt to `/api/generate` (or `/api/generate/stream` for
+   live reasoning + code). A per-create **idempotency key** rides along so a
+   retry/replay can't fork a duplicate project.
+2. `main.py` validates + resolves ownership, `llm.py` calls the selected model
+   (keys stay server-side; `mock` needs none).
+3. The result is saved via `db.py` as a project **plus an append-only version
+   snapshot**; the response carries the `project_id`.
+4. Follow-up messages iterate **in place** on that `project_id` — the server
+   loads the authoritative current HTML, so the client can't forge the base.
+
+---
+
 ## Tech stack
 
 - **Backend:** FastAPI (Python 3.12), served by uvicorn
@@ -61,10 +106,12 @@ atoms-demo/
 │  └─ style.css / login.css
 ├─ scripts/
 │  └─ test_db_backend.py   # end-to-end DB backend check (users/sessions/projects)
+├─ tests/           # pytest suite: auth · generate · ownership · versions · idempotency
 ├─ .github/workflows/keep-alive.yml   # pings /api/health so the free instance stays awake
 ├─ render.yaml      # Render blueprint (Python 3.12, env vars, health check)
 ├─ .python-version  # 3.12.7 — avoids Python 3.14 wheel/compile issues on Render
 ├─ requirements.txt
+├─ requirements-dev.txt   # + pytest, for running the test suite
 ├─ .env.example     # single-model quickstart
 └─ .env.multi-model.example   # all providers at once
 ```
@@ -86,14 +133,35 @@ no database setup.
 
 ---
 
+## Tests
+
+A `pytest` suite covers the backend end to end, fully offline (the `mock` model,
+a throwaway SQLite file per test — it never touches Neon or the network):
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+| Area | What's covered |
+| --- | --- |
+| **Auth** | register/login/logout, bad email & short password, duplicate email, wrong password, session `me` |
+| **Generate** | prompt required, guest gets HTML but nothing persisted, logged-in create persists, iterate-in-place |
+| **Ownership** | a user can't read/iterate/list-versions of another user's project (404, no existence leak) |
+| **Versions** | history grows on create+iterate, snapshot HTML fetch, **non-destructive rollback** (restore appends) |
+| **Idempotency** | same key → one project; different keys → distinct; keyless → legacy; key scoped per user |
+
+---
+
 ## Choosing a model (Trae-style dropdown)
 
 Instead of one hard-wired provider, the app keeps a **registry** of selectable
 models (`MODEL_REGISTRY` in [app/config.py](app/config.py)). The UI shows a
-dropdown; **a model only appears if its API key env var is set** (the keyless
-`mock` is always there). API keys never leave the server — the browser sends only
-a model `id` (e.g. `deepseek-chat`), and the key for that id is read from the
-environment on the server.
+dropdown; **a model only appears if its API key env var is set** (plus the
+always-on BYOK entry). The keyless `mock` is `hidden` — kept as a server-side
+fallback but never shown as a choice. API keys never leave the server — the
+browser sends only a model `id` (e.g. `deepseek-chat`), and the key for that id
+is read from the environment on the server.
 
 Copy `.env.example` (or `.env.multi-model.example`) to `.env` and fill in only the
 providers you want:
@@ -172,7 +240,7 @@ This repo ships `render.yaml`, so it deploys as a web service on the free tier.
 | POST | `/api/auth/login` | login → sets session cookie |
 | POST | `/api/auth/logout` | clears session |
 | GET | `/api/auth/me` | current user (or null) |
-| POST | `/api/generate` | build a new app, or iterate on one (`project_id` / `base_html`) |
+| POST | `/api/generate` | build a new app, or iterate on one (`project_id` / `base_html`); create dedupes on optional `idempotency_key` |
 | GET | `/api/projects` | current user's saved apps |
 | GET | `/api/projects/{id}` | one saved app (owner-scoped) |
 | GET | `/api/projects/{id}/versions` | a project's version snapshots (newest first, owner-scoped) |
@@ -195,6 +263,8 @@ See [DESIGN.md](./DESIGN.md) for request/response shapes and design rationale.
 - [x] Streaming generation (SSE — live reasoning + code as it's written)
 - [x] Version history per project + non-destructive rollback
 - [x] Export the generated app — download `index.html`, copy source, open in a new tab
+- [x] Server-side idempotent create — a retry/replay can't fork a duplicate project
+- [x] pytest suite — auth · generate · ownership · versions · idempotency (offline)
 
 ## Security notes
 
