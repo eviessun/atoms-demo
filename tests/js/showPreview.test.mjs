@@ -38,19 +38,26 @@ function extractShowPreviewBody() {
 
 // Rebuild showPreview as a callable with its collaborators injected as params,
 // so the extracted source runs against our spies instead of app.js globals.
-// showPreview mutates a module-level `currentActiveFile` and calls a helper
-// `renderFileTabs()` that repaints the file tab strip. The tab-strip helper
-// isn't the subject here (dedicated tests cover it), so we inject a no-op spy
-// and expose currentActiveFile as a `let` local inside the sandbox so the
-// assignment doesn't throw.
+// showPreview mutates a handful of module-level state vars and calls a couple
+// of helpers we don't want to re-implement. We expose those as `let` locals
+// inside the sandbox and inject stubs for the helpers, so the assignments and
+// calls don't throw.
 function makeShowPreview(deps) {
   const body = extractShowPreviewBody();
   const fn = new Function(
-    "html", "setCode", "previewEl", "requestAnimationFrame", "switchTab", "renderFileTabs",
-    "let currentActiveFile;\n" + body,
+    "html", "setCode", "previewEl", "requestAnimationFrame", "switchTab", "renderFileTabs", "splitHtmlIntoFiles",
+    "let currentActiveFile;\nlet currentFiles;\nlet currentFilesSlug;\n" + body,
   );
   return (html) =>
-    fn(html, deps.setCode, deps.previewEl, deps.requestAnimationFrame, deps.switchTab, deps.renderFileTabs);
+    fn(
+      html,
+      deps.setCode,
+      deps.previewEl,
+      deps.requestAnimationFrame,
+      deps.switchTab,
+      deps.renderFileTabs,
+      deps.splitHtmlIntoFiles,
+    );
 }
 
 // A harness that records the ORDER of the side effects we care about, and lets
@@ -74,6 +81,10 @@ function makeHarness() {
     requestAnimationFrame: (cb) => { events.push("raf"); rafCb = cb; },
     switchTab: (tab) => { events.push(`switchTab:${tab}`); },
     renderFileTabs: () => {},
+    // Stub to no-split for these tests: they cover the raf/tab-reveal ordering,
+    // not the Code-tab file-split behavior. A dedicated splitHtmlIntoFiles test
+    // covers the split-vs-no-split logic.
+    splitHtmlIntoFiles: () => ({ hasSplit: false, files: null }),
   };
 
   return {

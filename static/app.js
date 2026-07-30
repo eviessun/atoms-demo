@@ -262,8 +262,20 @@ function selectCodeFile(name) {
 // Single-file mode (regular project / freshly generated app) — inline HTML
 // via srcdoc so we don't need a server-side URL.
 function showPreview(html) {
-  currentActiveFile = "index.html";
-  setCode(html);
+  // Try to split inline <style>/<script> out for the Code tab. The iframe still
+  // renders the ORIGINAL html via srcdoc, so no relative-path resolution is
+  // needed; the split is a view-only concern (three tabs instead of one blob).
+  const split = splitHtmlIntoFiles(html);
+  if (split.hasSplit) {
+    currentFiles = split.files;
+    currentFilesSlug = null;   // no static endpoint — iframe uses srcdoc
+    currentActiveFile = "index.html";
+  } else {
+    currentFiles = null;
+    currentFilesSlug = null;
+    currentActiveFile = "index.html";
+  }
+  setCode(currentFiles ? currentFiles[0].content : html);
   renderFileTabs();
   previewEl.removeAttribute("src");
   previewEl.srcdoc = html;
@@ -275,6 +287,51 @@ function showPreview(html) {
   // transition — exactly what a manual Code->Preview tab click does, which we
   // confirmed always repaints — so the new document actually shows.
   requestAnimationFrame(() => switchTab("preview"));
+}
+
+// Best-effort split of a single-file app HTML into logical index.html /
+// style.css / app.js buckets for the Code tab. The result is view-only: the
+// preview iframe still renders the original HTML unchanged via srcdoc.
+//
+// What we pull out:
+//   - every inline <style>...</style>  -> style.css (concatenated)
+//   - every inline <script>...</script>  (no src=) -> app.js (concatenated)
+// What we leave alone:
+//   - <link rel="stylesheet" href="...">  and  <script src="...">
+//     (external refs; still visible inside index.html)
+//
+// If neither an inline <style> nor an inline <script> is found, we report
+// hasSplit=false and callers fall back to single-file mode.
+function splitHtmlIntoFiles(html) {
+  const styles = [];
+  const scripts = [];
+  const STYLE_RE = /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi;
+  const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+
+  let indexHtml = html.replace(STYLE_RE, (_, body) => {
+    styles.push(body.trim());
+    return "";
+  });
+  indexHtml = indexHtml.replace(SCRIPT_RE, (whole, attrs, body) => {
+    if (/\bsrc\s*=/i.test(attrs)) return whole;   // external <script src=…>
+    scripts.push(body.trim());
+    return "";
+  });
+
+  const styleBody = styles.filter(Boolean).join("\n\n");
+  const scriptBody = scripts.filter(Boolean).join("\n\n");
+  if (!styleBody && !scriptBody) {
+    return { hasSplit: false, files: null };
+  }
+
+  // Tidy: collapse blank runs left behind by the stripped tags so the
+  // index.html tab reads cleanly.
+  indexHtml = indexHtml.replace(/\n[ \t]*\n[ \t]*\n+/g, "\n\n");
+
+  const files = [{ name: "index.html", language: "html", content: indexHtml }];
+  if (styleBody) files.push({ name: "style.css", language: "css", content: styleBody });
+  if (scriptBody) files.push({ name: "app.js", language: "javascript", content: scriptBody });
+  return { hasSplit: true, files };
 }
 
 // Multi-file mode (featured showcase) — the iframe loads the entry HTML from
@@ -301,14 +358,17 @@ function renderMode() {
   const loaded = hasApp();
   // Featured showcases are read-only demos, not editable projects — the composer
   // stays in "new app" mode so a submit starts a brand-new project (guests still
-  // hit the login gate on the first keystroke).
-  const editing = loaded && currentFiles == null;
+  // hit the login gate on the first keystroke). We key off `currentFilesSlug`
+  // (which only featured mode sets) rather than `currentFiles`, because a
+  // regular user app that we split into index.html/style.css/app.js for the
+  // Code tab still uses `currentFiles` but *is* editable.
+  const editing = loaded && currentFilesSlug == null;
   if (editing) {
     modeLabel.textContent = i18n.t("app.mode_edit", { name: currentTitle });
     sendBtn.textContent = i18n.t("app.iterate");
     promptEl.placeholder = i18n.t("app.prompt_ph_edit");
     newAppBtn.classList.remove("hidden");
-  } else if (currentFiles != null) {
+  } else if (currentFilesSlug != null) {
     // Featured mode: banner labels the showcase; "new app" button clears it.
     modeLabel.textContent = i18n.t("app.mode_featured", { name: currentTitle });
     sendBtn.textContent = i18n.t("app.generate");
