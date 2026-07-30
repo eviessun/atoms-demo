@@ -1,31 +1,37 @@
 # Atoms Demo
 
-> 🌐 **中文版说明见 [README.zh-CN.md](./README.zh-CN.md)** · Architecture & design notes: [DESIGN.md](./DESIGN.md)
+> A mini **AI-powered application builder**. Describe an app in natural language, and an LLM will generate a self-contained web application that renders in a sandboxed preview. Continue the conversation to **iterate on the generated app in real-time**.
 
-A mini **AI app builder**: describe an app in plain language, an LLM generates a
-self-contained web app, and it renders live in a sandboxed preview — then you can
-keep chatting to **iterate on it in place**. Inspired by Atoms / v0 / bolt.new.
+[![Live Demo](https://img.shields.io/badge/Demo-Live%20Now-brightgreen)](https://atoms-demo-lted.onrender.com)
+[![GitHub Stars](https://img.shields.io/github/stars/eviessun/atoms-demo?style=social)](https://github.com/eviessun/atoms-demo)
 
-- **Live demo:** https://atoms-demo-lted.onrender.com
-- **Source:** https://github.com/eviessun/atoms-demo
+*   **在线体验 / Live Demo:** [https://atoms-demo-lted.onrender.com](https://atoms-demo-lted.onrender.com)
+*   **源代码 / Source Code:** [https://github.com/eviessun/atoms-demo](https://github.com/eviessun/atoms-demo)
+*   **设计文档 / Design Docs:** [DESIGN.md](./DESIGN.md)
+*   **提交说明 / Submission:** [SUBMISSION.md](./SUBMISSION.md)
 
-The whole pipeline (type request → generate → live preview → save → iterate) is
-real and interactive, data is **persisted in a cloud database**, and it runs out
-of the box with **no API key** via a keyless `mock` model.
+## ✨ Key Features & Technical Highlights
+
+### 1. Real-time Interactive Generation
+*   **Beyond static generation:** The core loop is `Generate -> Preview -> Save -> Iterate`. After the initial generation, users can chat with the AI to modify the application ("change the theme to dark", "add a new button"), and the model edits the HTML **in place**.
+*   **Sandboxed Preview:** The generated application is rendered in an isolated iframe (`sandbox="allow-scripts allow-forms allow-modals"`) to ensure security and prevent any interference with the main application.
+
+### 2. Dual-Mode Architecture
+*   **One-shot Generation:** Creates a new project from a natural language description.
+*   **Iterative Editing:** The server retrieves the authoritative HTML from the database (preventing client-side tampering) and sends it back to the model along with the modification instructions, ensuring a true "conversation" with the generated app.
+
+### 3. Robust & Flexible Backend
+*   **Dual-Database Support:** Seamlessly switches between **PostgreSQL (Neon)** for production (with persistent storage) and **SQLite** for local development (zero configuration).
+*   **Multi-Model Support:** A pluggable model registry allows switching between different LLMs (e.g., DeepSeek, OpenRouter, custom BYOK). API keys are kept strictly on the server-side; the browser only sends a `model_id`.
+*   **Graceful Fallback:** A keyless `mock` model ensures the demo works out-of-the-box without any API keys and provides a fallback if a real model fails.
+
+### 4. Advanced Input Capabilities
+*   **Multimodal Input:**
+    *   **Image Upload:** Users can attach images (base64 data URLs) for vision models. Both frontend and backend gate this feature.
+    *   **Voice Input:** Leverages the browser's Web Speech API for zero-cost, real-time speech-to-text.
+*   **Bilingual UI:** Full English and Chinese support with a one-click language toggle that persists the user's preference.
 
 ---
-
-## Highlights
-
-| Requirement | How it's met |
-| --- | --- |
-| **Real interaction (not static)** | Generate an app, then refine it by chatting ("make the button green"); the model edits the current HTML in place |
-| **Data persistence** | Accounts + generated projects stored in **PostgreSQL (Neon)**; survives restarts/redeploys. Auto-falls back to SQLite locally |
-| **Public link** | Deployed on Render (free): https://atoms-demo-lted.onrender.com |
-| **Multi-model, key-safe** | Trae-style model dropdown; API keys stay on the server, the browser only sends a model id |
-| **Multimodal input** | Attach images (vision models only — gated on both sides) + voice-to-text via the browser's Web Speech API |
-| **Bilingual UI** | One-click 中 / EN toggle across the whole app, preference remembered |
-| **Runs with zero keys** | Keyless `mock` model + graceful fallback so a live demo never hard-errors |
 
 ---
 
@@ -71,6 +77,33 @@ flowchart LR
    snapshot**; the response carries the `project_id`.
 4. Follow-up messages iterate **in place** on that `project_id` — the server
    loads the authoritative current HTML, so the client can't forge the base.
+
+### Deep Dive: The Iteration Loop
+
+The key differentiator is that this is not just a one-shot generator. Here is how the iterative editing works:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend
+    participant DB
+    participant LLM
+
+    User->>Frontend: "Make the button green"
+    Frontend->>Backend: POST /api/generate { project_id: 12, prompt: "Make button green" }
+    Backend->>DB: SELECT html FROM projects WHERE id = 12
+    DB-->>Backend: Returns current HTML
+    Backend->>LLM: Generate(HTML_from_DB + "Make button green")
+    LLM-->>Backend: New HTML
+    Backend->>DB: UPDATE projects SET html = New HTML WHERE id = 12
+    Backend->>Frontend: Returns New HTML
+    Frontend->>User: Renders updated app in iframe
+```
+
+**Why this is robust:**
+*   **Server-Side Truth:** The client's `base_html` is ignored for logged-in users. The server always fetches the HTML from the database, preventing client-side forgery.
+*   **Stateful Context:** The LLM sees the entire current application, ensuring modifications are contextually aware.
 
 ---
 
