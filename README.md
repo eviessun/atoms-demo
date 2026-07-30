@@ -150,6 +150,21 @@ pytest
 | **Ownership** | a user can't read/iterate/list-versions of another user's project (404, no existence leak) |
 | **Versions** | history grows on create+iterate, snapshot HTML fetch, **non-destructive rollback** (restore appends) |
 | **Idempotency** | same key → one project; different keys → distinct; keyless → legacy; key scoped per user |
+| **Images** | `/api/models` exposes `vision`; data-URL sanitizer (filter + cap); content builders (OpenAI/Anthropic shapes); images forwarded only to vision models |
+
+The frontend logic (multimodal input, preview refresh) is covered by a small
+zero-dependency suite that runs the real `static/app.js` source through Node's
+built-in test runner — no jsdom, no `package.json`:
+
+```bash
+node --test          # runs tests/js/*.test.mjs
+```
+
+| Area | What's covered |
+| --- | --- |
+| **Image upload** | `stageImages` type filter · `MAX_IMAGES` cap · oversize/read-error handling; `syncAttachButton` vision gating; `composeBody` sends images only to vision models |
+| **Voice input** | `setupVoice` hides the mic when unsupported; recognition lang from i18n; result handler transcribes/appends into the textarea; error handler stays quiet on `aborted`/`no-speech` |
+| **Preview** | `showPreview` defers the tab reveal to `requestAnimationFrame` (fixes stale/blank iframe) |
 
 ---
 

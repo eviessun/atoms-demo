@@ -143,6 +143,20 @@ pytest
 | **权限隔离** | 用户无法读取/迭代/列出他人项目的版本（404，不泄露存在性） |
 | **版本** | 新建+迭代后历史增长、快照 HTML 获取、**非破坏性回滚**（回滚追加为新版本） |
 | **幂等** | 相同 key → 一个项目；不同 key → 各自独立；无 key → 旧行为；key 按用户隔离 |
+| **图片** | `/api/models` 暴露 `vision`；data URL 清洗（过滤 + 限量）；内容构造器（OpenAI/Anthropic 形状）；图片仅转发给 vision 模型 |
+
+前端逻辑（多模态输入、预览刷新）由一套零依赖测试覆盖：直接把 `static/app.js`
+的真实源码丢进 Node 内置测试运行器跑，不需要 jsdom，也没有 `package.json`：
+
+```bash
+node --test          # 运行 tests/js/*.test.mjs
+```
+
+| 范围 | 覆盖内容 |
+| --- | --- |
+| **图片上传** | `stageImages` 类型过滤 · `MAX_IMAGES` 上限 · 超大/读取失败处理；`syncAttachButton` 按 vision 置灰；`composeBody` 仅向 vision 模型带图 |
+| **语音输入** | `setupVoice` 不支持时隐藏麦克风；识别语言随 i18n；result 处理器把转写结果填入/追加到输入框；error 处理器在 `aborted`/`no-speech` 时保持静默 |
+| **预览** | `showPreview` 把标签页显示推迟到 `requestAnimationFrame`（修复预览 iframe 空白/陈旧） |
 
 ---
 
