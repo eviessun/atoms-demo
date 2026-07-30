@@ -58,6 +58,35 @@ EDIT_SYSTEM_PROMPT = textwrap.dedent(
     """
 ).strip()
 
+# Used for plain conversation turns that are NOT requests to build or edit an
+# app. The assistant should stay helpful and concise, and gently steer back to
+# app-building only when relevant.
+CHAT_SYSTEM_PROMPT = textwrap.dedent(
+    """
+    You are a friendly product assistant inside a web-app generator.
+
+    The user is chatting with you rather than asking you to build or edit an
+    app right now. Reply conversationally and helpfully in the same language as
+    the user.
+
+    Hard rules:
+    - Output ONLY plain text. No markdown fences, no HTML.
+    - Be concise, warm, and inviting.
+    - Do NOT pretend you already built or changed an app.
+    - If the user asks what you can do, who you are, or how to use the system,
+      explain THIS product's core workflow concretely:
+      1) describe an app idea to create a new app,
+      2) open an existing project and describe changes to iterate,
+      3) open a featured demo to preview/read code and then create your own,
+      4) switch between Preview and Code to inspect the result.
+    - Make the wording feel like a friendly hands-on assistant who can chat
+      naturally AND help the user get started, not like dry documentation.
+    - Prefer actionable examples such as "做一个番茄钟" or "把按钮改成蓝色".
+    - If it naturally helps, remind the user that when they are ready they can
+      directly describe an app or a modification request.
+    """
+).strip()
+
 
 def _edit_user_content(base_html: str, instruction: str) -> str:
     """Compose the user turn for an edit: current app + the change request."""
@@ -230,6 +259,31 @@ def _openai_html(
     return _strip_code_fences(resp.json()["choices"][0]["message"]["content"])
 
 
+def _openai_chat(
+    spec: ModelSpec, prompt: str, images: list[str] | None = None,
+) -> str:
+    headers = {"Authorization": f"Bearer {spec.api_key}"}
+    if "openrouter.ai" in spec.base_url:
+        headers["HTTP-Referer"] = "https://atoms-demo-lted.onrender.com"
+        headers["X-Title"] = settings.APP_NAME
+    messages = [
+        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        {"role": "user", "content": _openai_user_content(prompt, images)},
+    ]
+    resp = httpx.post(
+        f"{spec.base_url}/chat/completions",
+        headers=headers,
+        json={
+            "model": spec.model,
+            "messages": messages,
+            "temperature": 0.7,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
+
+
 def _anthropic_html(
     spec: ModelSpec, prompt: str, base_html: str | None = None,
     images: list[str] | None = None,
@@ -254,6 +308,27 @@ def _anthropic_html(
     return _strip_code_fences(resp.json()["content"][0]["text"])
 
 
+def _anthropic_chat(
+    spec: ModelSpec, prompt: str, images: list[str] | None = None,
+) -> str:
+    resp = httpx.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": spec.api_key,
+            "anthropic-version": "2023-06-01",
+        },
+        json={
+            "model": spec.model,
+            "max_tokens": 512,
+            "system": CHAT_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": _anthropic_user_content(prompt, images)}],
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()["content"][0]["text"].strip()
+
+
 def _generate_with_spec(
     spec: ModelSpec, prompt: str, base_html: str | None = None,
     images: list[str] | None = None,
@@ -268,6 +343,41 @@ def _generate_with_spec(
         return _anthropic_html(spec, prompt, base_html, imgs)
     # default / "mock": no key required
     return _mock_html(prompt, base_html)
+
+
+def _mock_chat(prompt: str) -> str:
+    """Small keyless conversational fallback so the chat path works offline.
+    The goal isn't to be brilliant — just obviously conversational and helpful
+    during local dev / demos without any API keys configured."""
+    p = (prompt or "").strip()
+    s = p.lower()
+    if any(x in s for x in ("你好", "您好", "hello", "hi", "hey", "嗨", "哈喽")):
+        return "你好呀，我在这儿。你可以先随便聊聊，也可以直接告诉我你想做个什么应用，我会接着帮你往下做。"
+    if any(x in s for x in ("你能做什么", "你会什么", "what can you do", "who are you", "你是谁")):
+        return (
+            "我在这儿，随时可以陪你一起把想法做出来。"
+            "最简单的开始方式，就是直接跟我说一句你想要什么，比如“做一个番茄钟”或者“做一个待办清单”，"
+            "我就会先帮你生成一个版本出来。"
+            "如果你已经打开了某个项目，也可以像聊天一样继续说“把按钮改成蓝色”这种修改要求，我会接着往下改。"
+            "你要是暂时没想法，也可以先点左侧“精选作品”找灵感；做好之后，右侧还能在“预览”和“代码”之间来回切换。"
+        )
+    if any(x in s for x in ("谢谢", "多谢", "thank")):
+        return "不客气呀。你想继续聊也行，想开始做应用也行，直接把需求告诉我就好。"
+    return (
+        f"收到，我明白你的意思了：{p}。如果你现在想继续聊，我可以接着陪你；"
+        "如果你想开始做应用，也可以直接把需求告诉我，我会帮你一步步生成出来。"
+    )
+
+
+def _chat_with_spec(
+    spec: ModelSpec, prompt: str, images: list[str] | None = None,
+) -> str:
+    imgs = images if (images and spec.vision) else None
+    if spec.transport == "openai":
+        return _openai_chat(spec, prompt, imgs)
+    if spec.transport == "anthropic":
+        return _anthropic_chat(spec, prompt, imgs)
+    return _mock_chat(prompt)
 
 
 def generate_app_html(
@@ -309,6 +419,30 @@ def generate_app_html(
         # only auto-degrade for server-managed models.
         if not byok and spec.transport != "mock" and settings.LLM_FALLBACK_TO_MOCK:
             return _mock_html(prompt, base_html), f"{spec.label} → Mock (fallback)"
+        raise
+
+
+def generate_chat_reply(
+    prompt: str,
+    model_id: str | None = None,
+    spec: ModelSpec | None = None,
+    images: list[str] | None = None,
+) -> tuple[str, str]:
+    """Plain-text conversational reply for non-app turns.
+
+    Uses the same model selection / BYOK / mock fallback rules as
+    generate_app_html, but returns plain text and never emits HTML."""
+    byok = spec is not None
+    if spec is None:
+        spec = get_model(model_id) or get_model(settings.default_model_id())
+        if spec is None or not spec.available:
+            spec = get_model("mock")
+
+    try:
+        return _chat_with_spec(spec, prompt, images), spec.label
+    except Exception:
+        if not byok and spec.transport != "mock" and settings.LLM_FALLBACK_TO_MOCK:
+            return _mock_chat(prompt), f"{spec.label} → Mock (fallback)"
         raise
 
 

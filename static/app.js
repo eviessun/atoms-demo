@@ -1187,6 +1187,77 @@ function composeBody(prompt, editing) {
   return body;
 }
 
+// Conservative chat detector: only divert obviously conversational turns away
+// from app generation. If a prompt looks even mildly "build/edit an app"-ish
+// we leave it on the normal generate path, because a false chat classification
+// is more harmful than occasionally generating when the user meant casual talk.
+function looksLikeChat(prompt) {
+  const s = (prompt || "").trim();
+  if (!s) return false;
+  const appish = [
+    /\b(app|web ?app|website|landing page|dashboard|todo|timer|pomodoro|html|css|javascript|js)\b/i,
+    /(应用|网页|网站|页面|界面|功能|原型|表单|按钮|导航|卡片|列表|图表|地图|日历|时钟|计时器|番茄钟|待办|上传|下载|登录|注册|后台|代码|预览|项目)/,
+    /^(做个|做一个|帮我做|帮我写|生成|创建|新建|开发|实现|搭一个|做一版)/,
+    /^(把.*改|帮我改|修改|优化|迭代|继续做|继续改)/,
+  ];
+  if (appish.some((re) => re.test(s))) return false;
+
+  const chatty = [
+    /^(hi|hello|hey|thanks|thank you|who are you|what can you do|how are you)\b/i,
+    /^(你好|您好|嗨|哈喽|早上好|中午好|下午好|晚上好|晚安|在吗|有人吗|谢谢|多谢|谢啦|再见|拜拜)[!！。.\s]*$/u,
+    /^(你是谁|你是干嘛的|你能做什么|你会什么|你会干嘛|你在吗|讲个笑话|聊聊天|随便聊聊|我想聊聊)/,
+    /^(为什么|怎么回事|什么意思|解释一下|帮我分析一下|我有个问题)/,
+    /[?？]\s*$/u,
+  ];
+  return chatty.some((re) => re.test(s));
+}
+
+// Same model/BYOK/image rules as app generation, but no project_id/base_html:
+// a chat turn must NEVER mutate the current app or persist a new one.
+function composeChatBody(prompt) {
+  const body = { prompt };
+  const modelId = selectedModelId();
+  if (modelId) body.model = modelId;
+  if (modelId === "byok") {
+    const cfg = loadByok();
+    if (!cfg || !cfg.key || !cfg.model) {
+      setStatus("status.error");
+      addMessage("assistant", i18n.t("byok.not_configured"));
+      openByokDialog();
+      return null;
+    }
+    body.byok_key = cfg.key;
+    body.byok_model = cfg.model;
+    body.byok_base_url = cfg.base_url || "";
+    body.byok_transport = cfg.transport || "openai";
+  }
+  if (pendingImages.length && selectedModelVision()) {
+    body.images = pendingImages.slice();
+  }
+  return body;
+}
+
+async function chat(prompt) {
+  const body = composeChatBody(prompt);
+  if (!body) return;
+  sendBtn.disabled = true;
+  setStatus("status.replying");
+  try {
+    const { ok, status, data } = await api("/api/chat", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    if (!ok) throw new Error(data.error || `HTTP ${status}`);
+    setStatus("status.ready");
+    addMessage("assistant", data.reply);
+  } catch (err) {
+    setStatus("status.error");
+    addMessage("assistant", i18n.t("msg.error", { msg: err.message }));
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
 // Once a generation finishes, mirror it into the UI + local state the same way
 // for both the blocking and streaming paths: render the preview, enter edit
 // mode, report where it was saved, and refresh the project list.
@@ -1405,11 +1476,12 @@ composer.addEventListener("submit", async (e) => {
   if (generating) return;
   const prompt = promptEl.value.trim();
   if (!prompt) return;
+  const chatting = looksLikeChat(prompt);
   generating = true;
   // Mint one idempotency key per CREATE submit (edits update a known project,
   // so they don't need one). Kept stable across a stream->blocking fallback so
   // that retry still maps to the same project server-side.
-  createIdemKey = currentHtml == null ? newIdemKey() : null;
+  createIdemKey = !chatting && currentHtml == null ? newIdemKey() : null;
   // Lock in the images for this request (vision models only), echo them in the
   // user's message, then clear the staging strip. pendingImages survives a
   // stream->blocking fallback and is cleared in finally.
@@ -1423,12 +1495,13 @@ composer.addEventListener("submit", async (e) => {
   // "My projects" right away — the real row won't exist until the model finishes
   // and the project is persisted. Edits update an already-listed project, so
   // they don't need one.
-  if (createIdemKey && currentUser) {
+  if (!chatting && createIdemKey && currentUser) {
     pendingProjectTitle = prompt;
     renderProjects(lastProjects);
   }
   try {
-    await generateStream(prompt);
+    if (chatting) await chat(prompt);
+    else await generateStream(prompt);
   } finally {
     generating = false;
     createIdemKey = null;

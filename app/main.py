@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from . import auth, db, featured
 from .config import BYOK_PRESETS, available_models, build_byok_spec, settings
-from .llm import generate_app_html, stream_app_html
+from .llm import generate_app_html, generate_chat_reply, stream_app_html
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
@@ -94,6 +94,16 @@ class GenerateRequest(BaseModel):
 class AuthRequest(BaseModel):
     email: str
     password: str
+
+
+class ChatRequest(BaseModel):
+    prompt: str
+    model: str | None = None
+    byok_key: str | None = None
+    byok_model: str | None = None
+    byok_base_url: str | None = None
+    byok_transport: str | None = None
+    images: list[str] | None = None
 
 
 # --- health + models -----------------------------------------------------
@@ -260,6 +270,30 @@ def _resolve_generate(req: "GenerateRequest", request: Request) -> _Resolved:
                      images=_sanitize_images(req.images))
 
 
+def _resolve_chat(req: "ChatRequest") -> tuple[str, object | None, list[str]] | JSONResponse:
+    """Validate a plain conversation request.
+
+    Chat turns never resolve a base_html / project target and never persist
+    anything; they only need the prompt, optional BYOK spec, and optional
+    images."""
+    prompt = (req.prompt or "").strip()
+    if not prompt:
+        return JSONResponse(status_code=400, content={"error": "prompt required"})
+
+    byok_spec = None
+    if req.model == "byok":
+        byok_spec = build_byok_spec(
+            key=req.byok_key or "",
+            model=req.byok_model or "",
+            base_url=req.byok_base_url or "",
+            transport=req.byok_transport or "openai",
+        )
+        if byok_spec.transport == "openai" and not byok_spec.base_url:
+            return JSONResponse(status_code=400, content={"error": "请填写 API 地址（base URL）"})
+
+    return prompt, byok_spec, _sanitize_images(req.images)
+
+
 def _persist_generation(r: _Resolved, html: str, provider: str) -> tuple[int | None, bool]:
     """Save a finished generation. Updates a saved project in place when
     iterating, else creates a new one for logged-in users. Guests get nothing
@@ -308,6 +342,30 @@ def generate(req: GenerateRequest, request: Request):
         "provider": used_provider,
         "project_id": project_id,
         "iterated": iterated,
+    }
+
+
+@app.post("/api/chat")
+def chat(req: ChatRequest):
+    """Plain-text conversational reply for non-app turns.
+
+    Unlike /api/generate this endpoint never creates or updates projects and
+    never changes the current preview — it's just assistant dialogue."""
+    resolved = _resolve_chat(req)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    prompt, byok_spec, images = resolved
+
+    try:
+        reply, used_provider = generate_chat_reply(
+            prompt, model_id=req.model, spec=byok_spec, images=images
+        )
+    except Exception as exc:  # noqa: BLE001 — surface upstream errors to the UI
+        return JSONResponse(status_code=502, content={"error": f"chat failed: {exc}"})
+
+    return {
+        "reply": reply,
+        "provider": used_provider,
     }
 
 
