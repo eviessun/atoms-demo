@@ -200,6 +200,12 @@ function startNewApp() {
   setCode("");
   switchTab("preview");   // reset to the placeholder
   setStatus("status.idle");
+  // Clear the conversation so the new app starts fresh — otherwise the previous
+  // project's chat (its "loaded"/"done" messages) lingers above the new one.
+  messagesEl.innerHTML = "";
+  // Drop any images staged for the old app; a brand-new app shouldn't inherit them.
+  attachedImages = [];
+  renderAttachments();
   renderMode();
   addMessage("assistant", i18n.t("msg.new_app"));
   promptEl.focus();
