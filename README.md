@@ -1,109 +1,145 @@
 # Atoms Demo
 
-> A mini **AI-powered application builder**. Describe an app in natural language, and an LLM will generate a self-contained web application that renders in a sandboxed preview. Continue the conversation to **iterate on the generated app in real-time**.
+> A mini **AI application builder** with an agent-style loop: describe an app, generate runnable HTML, preview it in a sandbox, then keep chatting to refine the same app in place.
 
 [![Live Demo](https://img.shields.io/badge/Demo-Live%20Now-brightgreen)](https://atoms-demo-lted.onrender.com)
 [![GitHub Stars](https://img.shields.io/github/stars/eviessun/atoms-demo?style=social)](https://github.com/eviessun/atoms-demo)
 
-*   **在线体验 / Live Demo:** [https://atoms-demo-lted.onrender.com](https://atoms-demo-lted.onrender.com)
-*   **源代码 / Source Code:** [https://github.com/eviessun/atoms-demo](https://github.com/eviessun/atoms-demo)
-*   **设计文档 / Design Docs:** [DESIGN.md](./DESIGN.md)
-*   **提交说明 / Submission:** [SUBMISSION.md](./SUBMISSION.md)
+| Entry | Link |
+| --- | --- |
+| **Live Demo** | https://atoms-demo-lted.onrender.com |
+| **Source Code** | https://github.com/eviessun/atoms-demo |
+| **Design Deep Dive** | [DESIGN.md](./DESIGN.md) |
+| **Submission Notes** | [SUBMISSION.md](./SUBMISSION.md) |
+| **中文说明** | [README.zh-CN.md](./README.zh-CN.md) |
+
+Atoms Demo is intentionally small in surface area and complete in product loop. The core path is real end to end: `prompt -> LLM generation -> sandboxed preview -> persisted project -> in-place iteration -> version history -> export`.
 
 ## ✨ Key Features & Technical Highlights
 
-### 1. Real-time Interactive Generation
-*   **Beyond static generation:** The core loop is `Generate -> Preview -> Save -> Iterate`. After the initial generation, users can chat with the AI to modify the application ("change the theme to dark", "add a new button"), and the model edits the HTML **in place**.
-*   **Sandboxed Preview:** The generated application is rendered in an isolated iframe (`sandbox="allow-scripts allow-forms allow-modals"`) to ensure security and prevent any interference with the main application.
-
-### 2. Dual-Mode Architecture
-*   **One-shot Generation:** Creates a new project from a natural language description.
-*   **Iterative Editing:** The server retrieves the authoritative HTML from the database (preventing client-side tampering) and sends it back to the model along with the modification instructions, ensuring a true "conversation" with the generated app.
-
-### 3. Robust & Flexible Backend
-*   **Dual-Database Support:** Seamlessly switches between **PostgreSQL (Neon)** for production (with persistent storage) and **SQLite** for local development (zero configuration).
-*   **Multi-Model Support:** A pluggable model registry allows switching between different LLMs (e.g., DeepSeek, OpenRouter, custom BYOK). API keys are kept strictly on the server-side; the browser only sends a `model_id`.
-*   **Graceful Fallback:** A keyless `mock` model ensures the demo works out-of-the-box without any API keys and provides a fallback if a real model fails.
-
-### 4. Advanced Input Capabilities
-*   **Multimodal Input:**
-    *   **Image Upload:** Users can attach images (base64 data URLs) for vision models. Both frontend and backend gate this feature.
-    *   **Voice Input:** Leverages the browser's Web Speech API for zero-cost, real-time speech-to-text.
-*   **Bilingual UI:** Full English and Chinese support with a one-click language toggle that persists the user's preference.
-
----
+| Capability | What is implemented |
+| --- | --- |
+| **Agentic iteration loop** | Create once, then keep editing the same project through follow-up chat. For logged-in users, the server loads the authoritative current HTML from the database before asking the model to modify it. |
+| **Sandboxed live preview** | Generated apps render through `<iframe srcdoc>` with `sandbox="allow-scripts allow-forms allow-modals"`, so generated code can run while remaining isolated from the parent app. |
+| **Durable persistence** | Production uses Neon PostgreSQL; local development falls back to SQLite with the same `db.py` function surface. Projects, sessions, idempotency keys, and version snapshots are stored. |
+| **Multi-model gateway** | A registry-driven LLM layer supports `mock`, OpenAI-compatible providers, Anthropic, and BYOK. The browser only sends a model id; provider keys never leave the server. |
+| **Resilient demo path** | The keyless `mock` model can run the entire workflow with no API key, and real-model failures can degrade to mock instead of breaking the review flow. |
+| **SSE streaming** | `/api/generate/stream` streams generation progress and final HTML, while the blocking `/api/generate` endpoint remains available for simpler clients/tests. |
+| **Versioned editing** | Every create/iterate/restore appends a version snapshot; rollback is non-destructive and becomes a new version itself. |
+| **Multimodal input** | Image attachments are available only for `vision` models with both frontend and backend gates; voice input uses the browser Web Speech API with no backend cost. |
+| **Bilingual UX** | Runtime zh/en i18n with localStorage persistence and event-driven re-rendering of dynamic content. |
 
 ---
 
 ## Architecture
 
-Three-panel single-page frontend (no build step) talks to a FastAPI backend,
-which owns auth, the LLM adapter, and a dual-backend datastore. The same
-generate path serves a **blocking** endpoint and an **SSE streaming** twin.
+The system is a build-less static SPA backed by a FastAPI control plane. The important architectural choice is that the browser is a renderer and interaction surface, while the server owns identity, model selection, persistence, versioning, and the authoritative base HTML for logged-in iteration.
 
 ```mermaid
-flowchart LR
-    subgraph Browser["Browser — static SPA (no build)"]
-        UI["index.html · app.js<br/>projects · chat · sandboxed &lt;iframe&gt; preview"]
+flowchart TB
+    %% ===== Experience layer =====
+    subgraph L0["Experience Layer — static SPA, no build step"]
+        direction LR
+        Gallery["Featured Gallery<br/>public preview"]
+        Projects["My Projects<br/>owner-scoped list"]
+        Chat["Chat Composer<br/>text · image · voice"]
+        Preview["Sandboxed Runtime<br/>&lt;iframe srcdoc&gt;"]
+        CodeTabs["Code / Version / Export<br/>HTML · CSS · JS · snapshots"]
     end
-    subgraph Server["FastAPI (app/)"]
-        API["main.py<br/>auth · generate · projects · versions"]
-        AUTH["auth.py<br/>PBKDF2 + cookie sessions"]
-        LLM["llm.py + config.py<br/>model registry · mock / OpenAI / Anthropic"]
-        API --- AUTH
-        API --- LLM
-    end
-    subgraph Data["Persistence (db.py)"]
-        PG[("PostgreSQL — Neon<br/>(prod)")]
-        SQLITE[("SQLite<br/>(local)")]
-    end
-    Providers["LLM providers<br/>OpenRouter · DeepSeek · Doubao · …"]
 
-    UI -- "POST /api/generate(/stream)" --> API
-    UI -- "cookie session" --> AUTH
-    LLM -. "OpenAI-compatible / Anthropic" .-> Providers
-    API -- "DATABASE_URL set?" --> PG
-    API -- "else" --> SQLITE
+    %% ===== API / orchestration layer =====
+    subgraph L1["Control Plane — FastAPI"]
+        direction TB
+        Router["app/main.py<br/>routing · validation · SSE orchestration"]
+        Auth["auth.py<br/>PBKDF2 · session cookie · owner scope"]
+        ProjectSvc["Project Service<br/>create · iterate · restore · export"]
+        FeaturedSvc["Featured Service<br/>manifest · file resolver"]
+    end
+
+    %% ===== Core platform layer =====
+    subgraph L2["Core Platform Seams"]
+        direction LR
+        ModelGateway["Model Gateway<br/>MODEL_REGISTRY · transport dispatch"]
+        DBGateway["Persistence Gateway<br/>db.py dual backend"]
+        I18N["Runtime i18n<br/>zh/en dictionaries · langchange"]
+    end
+
+    %% ===== External services =====
+    subgraph L3["External Runtime"]
+        direction LR
+        Providers["LLM Providers<br/>OpenRouter · DeepSeek · Doubao · Kimi · OpenAI · Anthropic"]
+        Neon[("Neon PostgreSQL<br/>durable production state")]
+        SQLite[("SQLite<br/>zero-config local dev")]
+        Render["Render Web Service<br/>health check · free-tier keep-alive"]
+    end
+
+    Gallery --> FeaturedSvc
+    Projects --> Router
+    Chat -- "POST /api/generate<br/>POST /api/generate/stream" --> Router
+    Router --> Auth
+    Router --> ProjectSvc
+    Router --> FeaturedSvc
+    ProjectSvc -- "server-authoritative base HTML" --> DBGateway
+    ProjectSvc -- "prompt + current HTML + images" --> ModelGateway
+    ModelGateway -- "server-side keys only" --> Providers
+    DBGateway -- "DATABASE_URL set" --> Neon
+    DBGateway -- "DATABASE_URL unset" --> SQLite
+    Router -- "HTML + metadata + version_id" --> Preview
+    Router -- "snapshot list / restore" --> CodeTabs
+    I18N -. "langchange re-render" .-> Chat
+    I18N -. "langchange re-render" .-> Projects
+    Render -. "serves" .-> Router
+
+    classDef experience fill:#edf4ff,stroke:#3b82f6,color:#0f172a,stroke-width:1px;
+    classDef control fill:#f5f3ff,stroke:#7c3aed,color:#111827,stroke-width:1px;
+    classDef platform fill:#ecfdf5,stroke:#059669,color:#064e3b,stroke-width:1px;
+    classDef external fill:#fff7ed,stroke:#ea580c,color:#431407,stroke-width:1px;
+    class Gallery,Projects,Chat,Preview,CodeTabs experience;
+    class Router,Auth,ProjectSvc,FeaturedSvc control;
+    class ModelGateway,DBGateway,I18N platform;
+    class Providers,Neon,SQLite,Render external;
 ```
 
-**Request flow — generate → persist → iterate:**
+### Trust Boundaries And Data Flow
 
-1. Browser POSTs a prompt to `/api/generate` (or `/api/generate/stream` for
-   live reasoning + code). A per-create **idempotency key** rides along so a
-   retry/replay can't fork a duplicate project.
-2. `main.py` validates + resolves ownership, `llm.py` calls the selected model
-   (keys stay server-side; `mock` needs none).
-3. The result is saved via `db.py` as a project **plus an append-only version
-   snapshot**; the response carries the `project_id`.
-4. Follow-up messages iterate **in place** on that `project_id` — the server
-   loads the authoritative current HTML, so the client can't forge the base.
+1. **Browser boundary:** the SPA owns UI state, staged images, language preference, and sandbox rendering. It never receives provider API keys.
+2. **Control-plane boundary:** FastAPI owns auth, ownership checks, idempotency, SSE framing, project lifecycle, and version history.
+3. **Model boundary:** `llm.py` translates a generic generate/edit request into provider-specific payloads. The registry determines transport, base URL, model name, key env var, and `vision` capability.
+4. **Persistence boundary:** `db.py` hides Postgres/SQLite differences from the rest of the application, including placeholder rewriting and insert-id bridging.
 
 ### Deep Dive: The Iteration Loop
 
-The key differentiator is that this is not just a one-shot generator. Here is how the iterative editing works:
+The differentiator is not the initial generation; it is the server-authoritative edit loop. Logged-in iteration never trusts client-supplied `base_html`.
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant User
-    participant Frontend
-    participant Backend
-    participant DB
-    participant LLM
+    participant SPA as Static SPA
+    participant API as FastAPI Control Plane
+    participant DB as db.py / PostgreSQL
+    participant LLM as Model Gateway
+    participant Runtime as Sandboxed iframe
 
-    User->>Frontend: "Make the button green"
-    Frontend->>Backend: POST /api/generate { project_id: 12, prompt: "Make button green" }
-    Backend->>DB: SELECT html FROM projects WHERE id = 12
-    DB-->>Backend: Returns current HTML
-    Backend->>LLM: Generate(HTML_from_DB + "Make button green")
-    LLM-->>Backend: New HTML
-    Backend->>DB: UPDATE projects SET html = New HTML WHERE id = 12
-    Backend->>Frontend: Returns New HTML
-    Frontend->>User: Renders updated app in iframe
+    User->>SPA: "Make the CTA green and add a task list"
+    SPA->>API: POST /api/generate { project_id, prompt, model, images? }
+    API->>API: Resolve session and owner scope
+    API->>DB: SELECT current html WHERE id=? AND user_id=?
+    DB-->>API: Authoritative current HTML
+    API->>LLM: Edit request = current HTML + user instruction
+    LLM-->>API: Complete updated HTML
+    API->>DB: UPDATE projects.html + INSERT project_versions snapshot
+    API-->>SPA: { html, project_id, version_id, provider, iterated:true }
+    SPA->>Runtime: Replace iframe srcdoc with updated HTML
+    Runtime-->>User: Interactive updated app
 ```
 
-**Why this is robust:**
-*   **Server-Side Truth:** The client's `base_html` is ignored for logged-in users. The server always fetches the HTML from the database, preventing client-side forgery.
-*   **Stateful Context:** The LLM sees the entire current application, ensuring modifications are contextually aware.
+**Why this matters:**
+
+- **Server-side truth:** logged-in users cannot forge another project's base HTML or bypass ownership checks.
+- **Stable context:** the model receives the full current application, not just a lossy diff.
+- **Clean project list:** follow-up edits update the same `project_id`; they do not create duplicate projects.
+- **Auditable rollback:** each create/iterate/restore appends a version snapshot, so history remains inspectable.
 
 ---
 

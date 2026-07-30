@@ -1,70 +1,147 @@
 # Atoms Demo（中文说明）
 
-> 🌐 **English version: [README.md](./README.md)** · 架构与设计说明：[DESIGN.md](./DESIGN.md)
+> 一个带 Agent 式迭代闭环的迷你 **AI 应用生成器**：描述应用、生成可运行 HTML、沙箱预览，然后继续对话，在同一个应用上原地修改。
 
-一个迷你 **AI 应用生成器**：用自然语言描述一个应用，LLM 生成一个自包含的网页应用，
-在沙箱预览里实时渲染 —— 然后你还能继续对话**在原应用上迭代修改**。灵感来自
-Atoms / v0 / bolt.new。
+[![Live Demo](https://img.shields.io/badge/Demo-Live%20Now-brightgreen)](https://atoms-demo-lted.onrender.com)
+[![GitHub Stars](https://img.shields.io/github/stars/eviessun/atoms-demo?style=social)](https://github.com/eviessun/atoms-demo)
 
-- **在线体验：** https://atoms-demo-lted.onrender.com
-- **源码仓库：** https://github.com/eviessun/atoms-demo
+| 入口 | 链接 |
+| --- | --- |
+| **在线体验** | https://atoms-demo-lted.onrender.com |
+| **源码仓库** | https://github.com/eviessun/atoms-demo |
+| **架构设计深读** | [DESIGN.md](./DESIGN.md) |
+| **提交说明** | [SUBMISSION.md](./SUBMISSION.md) |
+| **English version** | [README.md](./README.md) |
 
-整条链路（输入需求 → 生成 → 实时预览 → 保存 → 迭代）都是真实可交互的，数据
-**持久化在云数据库**，且**无需任何 API key**（内置 keyless 的 `mock` 模型）就能开箱即用。
+Atoms Demo 刻意保持产品表面简单，但把核心闭环做完整：`prompt -> LLM 生成 -> 沙箱预览 -> 项目持久化 -> 原地迭代 -> 版本历史 -> 导出`。
 
 ---
 
-## 亮点（对照笔试硬性要求）
+## 关键特性与技术亮点
 
-| 要求 | 实现方式 |
+| 能力 | 实现方式 |
 | --- | --- |
-| **真实交互（非静态）** | 生成后可继续对话细化（"把按钮改成绿色"），模型在当前 HTML 上**原地修改** |
-| **数据持久化** | 账号 + 生成的项目存入 **PostgreSQL（Neon）**，跨重启/重新部署不丢；本地自动回退 SQLite |
-| **公网链接** | 部署在 Render（免费档）：https://atoms-demo-lted.onrender.com |
-| **多模型、密钥安全** | Trae 风格的模型下拉；API key 只留在服务端，浏览器只发送 model id |
-| **多模态输入** | 可附带图片（仅 vision 模型，前后端双重门控）+ 浏览器 Web Speech API 语音转文字 |
-| **中英文界面** | 全站一键 中 / EN 切换，选择被记住 |
-| **零 key 可跑** | keyless `mock` 模型 + 出错优雅回退，线上演示永不硬失败 |
+| **Agent 式迭代闭环** | 先创建，再通过后续对话持续修改同一个项目；登录用户迭代时，服务端从数据库读取权威 HTML 后再交给模型修改。 |
+| **沙箱实时预览** | 生成应用通过 `<iframe srcdoc>` 渲染，并配置 `sandbox="allow-scripts allow-forms allow-modals"`，既能运行脚本，又与父页面隔离。 |
+| **持久化项目系统** | 线上使用 Neon PostgreSQL，本地自动回退 SQLite；项目、会话、幂等键、版本快照都进入数据库。 |
+| **多模型网关** | LLM 层由注册表驱动，支持 `mock`、OpenAI 兼容 provider、Anthropic 和 BYOK；浏览器只发送 model id，API key 永远留在服务端。 |
+| **稳定演示路径** | keyless `mock` 模型无需任何 key 即可跑完整流程；真实模型失败时可降级到 mock，不影响评审体验。 |
+| **SSE 流式生成** | `/api/generate/stream` 实时流出生成过程与最终 HTML；同时保留阻塞式 `/api/generate` 方便测试和简单客户端。 |
+| **版本化编辑** | 每次新建/迭代/回滚都追加快照；回滚本身也是新版本，历史不被截断。 |
+| **多模态输入** | 图片仅对 `vision` 模型开放，前后端双重门控；语音输入使用浏览器 Web Speech API，无后端成本。 |
+| **中英双语体验** | 运行时 zh/en i18n，偏好存 localStorage，动态内容通过 `langchange` 事件重渲染。 |
 
 ---
 
 ## 架构
 
-三栏式单页前端（无构建步骤）对接 FastAPI 后端，后端负责认证、LLM 适配器和双后端
-数据存储。同一条生成链路同时提供**阻塞式**接口和 **SSE 流式**孪生接口。
+系统是一个无构建步骤的静态 SPA，后端是 FastAPI 控制平面。关键架构选择是：浏览器只负责交互与渲染，服务端负责身份、模型选择、持久化、版本管理，以及登录用户迭代时的权威 HTML 基准。
 
 ```mermaid
-flowchart LR
-    subgraph Browser["浏览器 — 静态 SPA（无构建）"]
-        UI["index.html · app.js<br/>项目 · 对话 · 沙箱 &lt;iframe&gt; 预览"]
+flowchart TB
+    %% ===== Experience layer =====
+    subgraph L0["体验层 — 静态 SPA，无构建步骤"]
+        direction LR
+        Gallery["精选作品<br/>游客可预览"]
+        Projects["我的项目<br/>按 owner 隔离"]
+        Chat["对话输入区<br/>文本 · 图片 · 语音"]
+        Preview["沙箱运行时<br/>&lt;iframe srcdoc&gt;"]
+        CodeTabs["代码 / 版本 / 导出<br/>HTML · CSS · JS · 快照"]
     end
-    subgraph Server["FastAPI (app/)"]
-        API["main.py<br/>认证 · 生成 · 项目 · 版本"]
-        AUTH["auth.py<br/>PBKDF2 + cookie 会话"]
-        LLM["llm.py + config.py<br/>模型注册表 · mock / OpenAI / Anthropic"]
-        API --- AUTH
-        API --- LLM
-    end
-    subgraph Data["持久化 (db.py)"]
-        PG[("PostgreSQL — Neon<br/>（线上）")]
-        SQLITE[("SQLite<br/>（本地）")]
-    end
-    Providers["LLM 提供方<br/>OpenRouter · DeepSeek · 豆包 · …"]
 
-    UI -- "POST /api/generate(/stream)" --> API
-    UI -- "cookie 会话" --> AUTH
-    LLM -. "OpenAI 兼容 / Anthropic" .-> Providers
-    API -- "配了 DATABASE_URL？" --> PG
-    API -- "否则" --> SQLITE
+    %% ===== API / orchestration layer =====
+    subgraph L1["控制平面 — FastAPI"]
+        direction TB
+        Router["app/main.py<br/>路由 · 校验 · SSE 编排"]
+        Auth["auth.py<br/>PBKDF2 · cookie 会话 · 归属校验"]
+        ProjectSvc["项目服务<br/>新建 · 迭代 · 回滚 · 导出"]
+        FeaturedSvc["精选作品服务<br/>manifest · 文件解析"]
+    end
+
+    %% ===== Core platform layer =====
+    subgraph L2["核心可替换边界"]
+        direction LR
+        ModelGateway["模型网关<br/>MODEL_REGISTRY · transport 分发"]
+        DBGateway["持久化网关<br/>db.py 双后端"]
+        I18N["运行时 i18n<br/>zh/en 词典 · langchange"]
+    end
+
+    %% ===== External services =====
+    subgraph L3["外部运行环境"]
+        direction LR
+        Providers["LLM Providers<br/>OpenRouter · DeepSeek · 豆包 · Kimi · OpenAI · Anthropic"]
+        Neon[("Neon PostgreSQL<br/>线上持久化状态")]
+        SQLite[("SQLite<br/>本地零配置开发")]
+        Render["Render Web Service<br/>健康检查 · 免费档保活"]
+    end
+
+    Gallery --> FeaturedSvc
+    Projects --> Router
+    Chat -- "POST /api/generate<br/>POST /api/generate/stream" --> Router
+    Router --> Auth
+    Router --> ProjectSvc
+    Router --> FeaturedSvc
+    ProjectSvc -- "服务端权威 HTML" --> DBGateway
+    ProjectSvc -- "prompt + 当前 HTML + images" --> ModelGateway
+    ModelGateway -- "key 只在服务端" --> Providers
+    DBGateway -- "DATABASE_URL 存在" --> Neon
+    DBGateway -- "DATABASE_URL 不存在" --> SQLite
+    Router -- "HTML + metadata + version_id" --> Preview
+    Router -- "快照列表 / 回滚" --> CodeTabs
+    I18N -. "langchange 重渲染" .-> Chat
+    I18N -. "langchange 重渲染" .-> Projects
+    Render -. "托管" .-> Router
+
+    classDef experience fill:#edf4ff,stroke:#3b82f6,color:#0f172a,stroke-width:1px;
+    classDef control fill:#f5f3ff,stroke:#7c3aed,color:#111827,stroke-width:1px;
+    classDef platform fill:#ecfdf5,stroke:#059669,color:#064e3b,stroke-width:1px;
+    classDef external fill:#fff7ed,stroke:#ea580c,color:#431407,stroke-width:1px;
+    class Gallery,Projects,Chat,Preview,CodeTabs experience;
+    class Router,Auth,ProjectSvc,FeaturedSvc control;
+    class ModelGateway,DBGateway,I18N platform;
+    class Providers,Neon,SQLite,Render external;
 ```
 
-**请求链路 —— 生成 → 持久化 → 迭代：**
+### 信任边界与数据流
 
-1. 浏览器把 prompt POST 到 `/api/generate`（或流式的 `/api/generate/stream`，
-   实时展示推理 + 代码）。每次新建都带一个**幂等键**，让重试/重放不会分叉出重复项目。
-2. `main.py` 校验并解析归属，`llm.py` 调用所选模型（key 只留服务端；`mock` 无需 key）。
-3. 结果通过 `db.py` 存为一个项目 **外加一条 append-only 版本快照**；响应带回 `project_id`。
-4. 后续对话在该 `project_id` 上**原地迭代** —— 服务端加载权威的当前 HTML，客户端无法伪造 base。
+1. **浏览器边界**：SPA 只负责 UI 状态、暂存图片、语言偏好和沙箱渲染；永远拿不到 provider API key。
+2. **控制平面边界**：FastAPI 负责认证、归属校验、幂等、SSE 帧、项目生命周期和版本历史。
+3. **模型边界**：`llm.py` 把通用的 generate/edit 请求翻译成各 provider 的 payload；注册表决定 transport、base URL、模型名、key 环境变量和 `vision` 能力。
+4. **持久化边界**：`db.py` 对上层隐藏 Postgres/SQLite 差异，包括占位符转换和插入 id 桥接。
+
+### 迭代链路深挖
+
+真正的差异点不是首轮生成，而是服务端持有权威状态的编辑循环。登录用户迭代时不会信任客户端传来的 `base_html`。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as 用户
+    participant SPA as 静态 SPA
+    participant API as FastAPI 控制平面
+    participant DB as db.py / PostgreSQL
+    participant LLM as 模型网关
+    participant Runtime as 沙箱 iframe
+
+    User->>SPA: "把 CTA 改成绿色，再加一个任务清单"
+    SPA->>API: POST /api/generate { project_id, prompt, model, images? }
+    API->>API: 解析 session 并校验 owner
+    API->>DB: SELECT current html WHERE id=? AND user_id=?
+    DB-->>API: 返回权威当前 HTML
+    API->>LLM: Edit request = 当前 HTML + 用户指令
+    LLM-->>API: 返回完整更新后 HTML
+    API->>DB: UPDATE projects.html + INSERT project_versions snapshot
+    API-->>SPA: { html, project_id, version_id, provider, iterated:true }
+    SPA->>Runtime: 替换 iframe srcdoc
+    Runtime-->>User: 交互式更新后的应用
+```
+
+**为什么重要：**
+
+- **服务端真相源**：登录用户无法伪造其他项目的 base HTML，也绕不过归属校验。
+- **上下文稳定**：模型拿到完整当前应用，而不是不可靠的局部 diff。
+- **项目列表干净**：后续修改更新同一个 `project_id`，不会每说一句话就多一个项目。
+- **回滚可审计**：每次新建/迭代/回滚都追加版本快照，历史链路完整。
 
 ---
 
