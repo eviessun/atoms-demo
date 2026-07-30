@@ -462,15 +462,23 @@ function startNewApp() {
   previewEl.srcdoc = "";
   switchTab("preview");   // reset to the placeholder
   setStatus("status.idle");
-  // Clear the conversation so the new app starts fresh — otherwise the previous
-  // project's chat (its "loaded"/"done" messages) lingers above the new one.
-  messagesEl.innerHTML = "";
+  resetConversation();
   // Drop any images staged for the old app; a brand-new app shouldn't inherit them.
   attachedImages = [];
   renderAttachments();
   renderMode();
   addMessage("assistant", i18n.t("msg.new_app"));
   promptEl.focus();
+}
+
+// Wipe the chat log because the user just switched contexts (started a new
+// app, opened a saved project, opened a featured showcase). The chat is
+// per-project scratch, not persistent history — leaving the previous
+// project's messages above the new one is confusing and clutters the log.
+// After the wipe the caller typically appends one fresh "loaded / opened"
+// notice so the log has some initial signpost.
+function resetConversation() {
+  messagesEl.innerHTML = "";
 }
 
 async function api(path, opts = {}) {
@@ -649,12 +657,11 @@ async function openProject(id) {
   enterEditMode({ projectId: id, html: data.html, title: data.prompt });
   showPreview(data.html);
   setStatus("status.ready");
-  // Same dedupe treatment as the featured "opened…" notice: clicking a saved
-  // project several times in a row (or bouncing between saved projects) just
-  // swaps the title in place instead of stacking N identical bubbles. An
-  // intervening real message (a generate/iterate exchange, opening a featured,
-  // etc.) breaks the collapse so the next open starts a fresh bubble.
-  upsertTaggedMessage("assistant", i18n.t("msg.loaded", { id, prompt: data.prompt }), "project-loaded");
+  // Chat is per-project scratch, not persistent history. Switching projects
+  // wipes the previous project's messages so the log is scoped to what the
+  // user is looking at right now.
+  resetConversation();
+  addMessage("assistant", i18n.t("msg.loaded", { id, prompt: data.prompt }));
 }
 
 // --- featured showcase (public) -----------------------------------------
@@ -726,15 +733,15 @@ async function openFeatured(slug) {
   enterFeaturedMode({ slug, files: data.files, entry: data.entry, title });
   showPreviewMultiFile({ slug, entry: data.entry });
   setStatus("status.ready");
-  // Tag both notices so consecutive featured clicks collapse into one bubble
-  // instead of stacking up. Any intervening un-tagged message (e.g. opening a
-  // saved project) breaks the collapse and a fresh bubble appears next time.
-  upsertTaggedMessage("assistant", i18n.t("msg.featured_loaded", { title }), "featured-loaded");
+  // Chat is per-project scratch. Wipe the previous project/featured messages
+  // so the log is scoped to just this showcase.
+  resetConversation();
+  addMessage("assistant", i18n.t("msg.featured_loaded", { title }));
   // Remixing a featured app into your own requires an account. Nudge guests to
   // log in up front (with an inline link) rather than letting them discover the
   // login gate only after they start typing.
   if (!currentUser) {
-    addLoginPrompt(i18n.t("msg.featured_login_hint"), { tag: "featured-login-hint" });
+    addLoginPrompt(i18n.t("msg.featured_login_hint"));
   }
 }
 

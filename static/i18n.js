@@ -89,7 +89,7 @@
       // featured showcase (public gallery)
       "app.featured": "精选作品",
       "app.featured_hint": "无需登录，点开即可预览",
-      "msg.featured_loaded": "已打开精选作品「{title}」。这是只读预览，右侧「代码」标签里可以看 index.html / style.css / app.js 各自的源码。想改成自己的？点底部「＋ 新应用」再描述你想要的。",
+      "msg.featured_loaded": "已打开精选作品「{title}」。这是只读示例，不能在它上面修改；右侧「代码」标签里可以看 index.html / style.css / app.js 各自的源码。想做类似的？点底部「＋ 新应用」，从零描述一个属于你自己的应用。",
       "msg.featured_login_hint": "想基于它生成属于自己的应用，请先登录 / 注册：",
       "msg.featured_open_fail": "无法打开这个精选作品，请稍后重试。",
 
@@ -223,7 +223,7 @@
       // featured showcase (public gallery)
       "app.featured": "Featured",
       "app.featured_hint": "No login needed — click to preview",
-      "msg.featured_loaded": "Opened the featured app “{title}”. This is a read-only preview — flip to the Code tab to browse index.html / style.css / app.js. Want your own? Hit “＋ New app” at the bottom and describe it.",
+      "msg.featured_loaded": "Opened the featured app “{title}”. It's a read-only sample — you can't edit this one; flip to the Code tab to browse index.html / style.css / app.js. Want something like it? Hit “＋ New app” at the bottom and describe your own from scratch.",
       "msg.featured_login_hint": "To build your own app from it, please log in / register first:",
       "msg.featured_open_fail": "Couldn't open this featured app, please try again.",
 
