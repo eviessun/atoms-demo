@@ -147,9 +147,10 @@ function addMessage(role, text, images) {
 // nudge guests to the login page up front (e.g. after they open a featured app
 // but need an account to remix it), instead of letting them hit the login gate
 // on the first keystroke.
-function addLoginPrompt(text) {
+function addLoginPrompt(text, { tag } = {}) {
   const div = document.createElement("div");
   div.className = "msg assistant";
+  if (tag) div.dataset.tag = tag;
   const p = document.createElement("p");
   p.textContent = text + " ";
   const link = document.createElement("a");
@@ -157,6 +158,30 @@ function addLoginPrompt(text) {
   link.href = "/login";
   link.textContent = i18n.t("app.login_entry");
   p.appendChild(link);
+  div.appendChild(p);
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Replace-or-append: keeps repeated same-kind notices (e.g. "已打开精选作品…")
+// from stacking up in the chat when the user clicks featured cards several
+// times in a row. If the LAST message in the log has this tag, we swap its
+// text; otherwise we append a fresh tagged bubble. Not general chat history —
+// only for transient ambient notices where the latest one supersedes prior
+// ones.
+function upsertTaggedMessage(role, text, tag) {
+  const last = messagesEl.lastElementChild;
+  if (last && last.dataset && last.dataset.tag === tag) {
+    const p = last.querySelector("p");
+    if (p) p.textContent = text;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return;
+  }
+  const div = document.createElement("div");
+  div.className = `msg ${role}`;
+  div.dataset.tag = tag;
+  const p = document.createElement("p");
+  p.textContent = text;
   div.appendChild(p);
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -344,7 +369,11 @@ function showPreviewMultiFile({ slug, entry }) {
   const first = currentFiles.find((f) => f.name === entry) || currentFiles[0];
   setCode(first ? first.content : "");
   renderFileTabs();
-  previewEl.srcdoc = "";
+  // Remove the srcdoc ATTRIBUTE (not just blank it): an iframe with a srcdoc
+  // attribute present — even empty "" — ignores src per the HTML spec and renders
+  // an empty about:srcdoc document. Blanking via `srcdoc = ""` leaves the
+  // attribute in place, so the featured file never loads. Drop it, then set src.
+  previewEl.removeAttribute("srcdoc");
   previewEl.src = `/featured-files/${encodeURIComponent(slug)}/${encodeURIComponent(entry)}`;
   requestAnimationFrame(() => switchTab("preview"));
 }
@@ -674,12 +703,15 @@ async function openFeatured(slug) {
   enterFeaturedMode({ slug, files: data.files, entry: data.entry, title });
   showPreviewMultiFile({ slug, entry: data.entry });
   setStatus("status.ready");
-  addMessage("assistant", i18n.t("msg.featured_loaded", { title }));
+  // Tag both notices so consecutive featured clicks collapse into one bubble
+  // instead of stacking up. Any intervening un-tagged message (e.g. opening a
+  // saved project) breaks the collapse and a fresh bubble appears next time.
+  upsertTaggedMessage("assistant", i18n.t("msg.featured_loaded", { title }), "featured-loaded");
   // Remixing a featured app into your own requires an account. Nudge guests to
   // log in up front (with an inline link) rather than letting them discover the
   // login gate only after they start typing.
   if (!currentUser) {
-    addLoginPrompt(i18n.t("msg.featured_login_hint"));
+    addLoginPrompt(i18n.t("msg.featured_login_hint"), { tag: "featured-login-hint" });
   }
 }
 
