@@ -2,50 +2,101 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>专注番茄钟 / Focus Pomodoro</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="app">
-  <header>专注番茄钟 / Focus Pomodoro</header>
-  <section class="timer-container">
-    <div class="mode-tabs">
-      <button class="mode-tab active" data-mode="focus" aria-label="Focus mode">Focus</button>
-      <button class="mode-tab" data-mode="short" aria-label="Short break">Short Break</button>
-      <button class="mode-tab" data-mode="long" aria-label="Long break">Long Break</button>
-    </div>
-    <div class="ring-wrapper">
-      <svg class="timer-svg" viewBox="0 0 100 100">
-        <circle class="timer-bg" cx="50" cy="50" r="45" />
-        <circle class="timer-progress focus" cx="50" cy="50" r="45" stroke-dasharray="283" stroke-dashoffset="283" />
-      </svg>
-      <div class="timer-display">
-        <span class="time">25:00</span>
-        <div class="current-task">Current task: <span class="task-name"></span></div>
+<div class="scene" data-mode="focus">
+  <!-- Faint corner starlight — subtle ambiance, not decoration overload -->
+  <div class="stars" aria-hidden="true">
+    <i style="top:8%;left:10%"></i><i style="top:14%;left:22%"></i>
+    <i style="top:22%;left:6%"></i><i style="top:10%;right:14%"></i>
+    <i style="top:20%;right:8%"></i><i style="top:6%;right:26%"></i>
+    <i style="bottom:12%;left:8%"></i><i style="bottom:20%;left:18%"></i>
+    <i style="bottom:8%;left:28%"></i><i style="bottom:14%;right:10%"></i>
+    <i style="bottom:22%;right:20%"></i><i style="bottom:9%;right:30%"></i>
+  </div>
+
+  <main class="app">
+    <header class="app-head">
+      <div class="brand">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <span>专注 · Focus</span>
       </div>
-    </div>
-    <div class="controls">
-      <button id="startBtn" class="btn-primary" aria-label="Start timer">▶️ Start</button>
-      <button id="pauseBtn" class="btn-secondary" aria-label="Pause timer">⏸️ Pause</button>
-      <button id="resetBtn" class="btn-secondary" aria-label="Reset timer">⏮️ Reset</button>
-    </div>
-    <div class="pomodoros">
-      Completed today: <span class="pomodoros-count">0</span> 🍅
-    </div>
-    <div class="settings">
-      <label>Focus: <input type="number" id="focusInput" min="1" value="25"> min</label>
-      <label>Short: <input type="number" id="shortInput" min="1" value="5"> min</label>
-      <label>Long: <input type="number" id="longInput" min="1" value="15"> min</label>
-    </div>
-  </section>
-  <section class="task-list">
-    <h2>Tasks</h2>
-    <div class="input-group">
-      <input type="text" id="taskInput" placeholder="Add a task..." aria-label="New task">
-      <button id="addTaskBtn" aria-label="Add task">+</button>
-    </div>
-    <ul id="taskList"></ul>
-  </section>
+      <div class="today" title="今日完成的番茄 / Pomodoros today">
+        今日 <b id="pomoCount">0</b> <span aria-hidden="true">🍅</span>
+      </div>
+    </header>
+
+    <!-- Mode segmented control -->
+    <nav class="modes" role="tablist" aria-label="计时模式 / Timer mode">
+      <button class="mode active" role="tab" aria-selected="true" data-mode="focus">专注</button>
+      <button class="mode" role="tab" aria-selected="false" data-mode="short">短休息</button>
+      <button class="mode" role="tab" aria-selected="false" data-mode="long">长休息</button>
+      <span class="mode-ink" id="modeInk" aria-hidden="true"></span>
+    </nav>
+
+    <!-- Centered dial -->
+    <section class="timer">
+      <div class="ring-wrap">
+        <svg class="ring" viewBox="0 0 240 240" aria-hidden="true">
+          <defs>
+            <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" class="grad-a" />
+              <stop offset="100%" class="grad-b" />
+            </linearGradient>
+          </defs>
+          <circle class="ring-track" cx="120" cy="120" r="104" />
+          <circle class="ring-progress" id="ringProgress" cx="120" cy="120" r="104"
+                  stroke="url(#ringGrad)" />
+        </svg>
+        <div class="ring-center">
+          <div class="time" id="timeDisplay" aria-live="polite">25:00</div>
+          <div class="phase" id="phaseLabel">保持专注</div>
+          <div class="pomo-dots" id="pomoDots" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <div class="current-task" id="currentTaskBox">
+        <span class="ct-icon" aria-hidden="true">✿</span>
+        <span class="ct-text" id="currentTaskText">添加一个任务开始专注</span>
+      </div>
+
+      <div class="controls">
+        <button class="btn btn-primary" id="startBtn">
+          <span class="btn-ico" aria-hidden="true">▶</span><span id="startLabel">开始</span>
+        </button>
+        <button class="btn btn-ghost" id="resetBtn" aria-label="重置计时器 / Reset timer">
+          <span class="btn-ico" aria-hidden="true">↺</span>
+        </button>
+      </div>
+
+      <details class="settings">
+        <summary>时长设置</summary>
+        <div class="settings-grid">
+          <label>专注<input type="number" id="focusMin" min="1" max="90" value="25"><span>分</span></label>
+          <label>短休<input type="number" id="shortMin" min="1" max="30" value="5"><span>分</span></label>
+          <label>长休<input type="number" id="longMin" min="1" max="60" value="15"><span>分</span></label>
+        </div>
+        <p class="settings-hint">调整后于下次“重置”生效</p>
+      </details>
+    </section>
+
+    <!-- Minimal task list -->
+    <section class="tasks">
+      <div class="tasks-head">
+        <h2>任务</h2>
+        <span class="tasks-count" id="tasksCount">0 / 0</span>
+      </div>
+      <form class="task-form" id="taskForm">
+        <input type="text" id="taskInput" maxlength="60" placeholder="想专注做的事…" aria-label="新任务 / New task" autocomplete="off">
+        <button type="submit" aria-label="添加任务 / Add task">＋</button>
+      </form>
+      <ul class="task-list" id="taskList"></ul>
+      <p class="tasks-empty" id="tasksEmpty">还没有任务，先添加一个吧</p>
+    </section>
+  </main>
 </div>
 
 <script src="app.js"></script>

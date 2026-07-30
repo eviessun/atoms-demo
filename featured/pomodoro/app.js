@@ -1,226 +1,328 @@
-(() => {
-  // State
-  let focusMinutes = 25, shortMinutes = 5, longMinutes = 15;
-  const durations = {
-    focus: focusMinutes * 60,
-    short: shortMinutes * 60,
-    long: longMinutes * 60
+/* 专注番茄钟 / Focus Pomodoro
+   All state lives in plain JS variables — NO localStorage (the preview runs in a
+   sandboxed iframe where Web Storage throws). Fully offline: the end-of-session
+   chime is synthesized with the Web Audio API, no audio files. */
+(function () {
+  "use strict";
+
+  var RING_LEN = 2 * Math.PI * 104; // circumference for r=104
+
+  var MODES = {
+    focus: { label: "保持专注", min: 25 },
+    short: { label: "短暂放松", min: 5 },
+    long:  { label: "好好休息", min: 15 }
   };
-  let currentMode = 'focus';
-  let remaining = durations[currentMode];
-  let timerInterval = null;
-  let isRunning = false;
-  let pomodorosCompleted = 0;
-  const tasks = [];
 
-  // DOM
-  const modeTabs = document.querySelectorAll('.mode-tab');
-  const startBtn = document.getElementById('startBtn');
-  const pauseBtn = document.getElementById('pauseBtn');
-  const resetBtn = document.getElementById('resetBtn');
-  const timeDisplay = document.querySelector('.time');
-  const progressCircle = document.querySelector('.timer-progress');
-  const currentTaskSpan = document.querySelector('.task-name');
-  const pomodorosCount = document.querySelector('.pomodoros-count');
-  const focusInput = document.getElementById('focusInput');
-  const shortInput = document.getElementById('shortInput');
-  const longInput = document.getElementById('longInput');
-  const taskInput = document.getElementById('taskInput');
-  const addTaskBtn = document.getElementById('addTaskBtn');
-  const taskList = document.getElementById('taskList');
+  // --- state ---
+  var state = {
+    mode: "focus",
+    durations: { focus: 25, short: 5, long: 15 }, // minutes
+    remaining: 25 * 60, // seconds
+    total: 25 * 60,
+    running: false,
+    ticker: null,
+    completedFocus: 0, // toward the 4-in-a-row long-break suggestion
+    pomodorosToday: 0
+  };
+  var tasks = [];
+  var taskSeq = 0;
 
-  // Init
-  function init() {
-    updateDurationFromInputs();
-    renderModeUI();
-    updateTimeDisplay();
-    updateProgressCircle();
-    updateCurrentTask();
-    renderTasks();
-    // Enable audio context on first user interaction
-    document.addEventListener('click', () => {
-      if (window.AudioContext || window.webkitAudioContext) {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') ctx.resume();
+  // --- elements ---
+  var $ = function (id) { return document.getElementById(id); };
+  var appEl = document.querySelector(".scene"); // data-mode lives on .scene
+  var timeEl = $("timeDisplay");
+  var phaseEl = $("phaseLabel");
+  var ringEl = $("ringProgress");
+  var ringSvg = document.querySelector(".ring");
+  var startBtn = $("startBtn");
+  var startLabel = $("startLabel");
+  var resetBtn = $("resetBtn");
+  var modeButtons = Array.prototype.slice.call(document.querySelectorAll(".mode"));
+  var modeInk = $("modeInk");
+  var pomoCountEl = $("pomoCount");
+  var pomoDotsEl = $("pomoDots");
+  var currentTaskText = $("currentTaskText");
+  var taskForm = $("taskForm");
+  var taskInput = $("taskInput");
+  var taskListEl = $("taskList");
+  var tasksEmpty = $("tasksEmpty");
+  var tasksCount = $("tasksCount");
+  var focusMin = $("focusMin");
+  var shortMin = $("shortMin");
+  var longMin = $("longMin");
+
+  ringEl.style.strokeDasharray = RING_LEN;
+
+  // --- rendering ---
+  function fmt(sec) {
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+  }
+
+  function renderTime() {
+    timeEl.textContent = fmt(state.remaining);
+    var frac = state.total > 0 ? state.remaining / state.total : 0;
+    ringEl.style.strokeDashoffset = RING_LEN * (1 - frac);
+    document.title = (state.running ? "▶ " : "") + fmt(state.remaining) +
+      " · " + MODES[state.mode].label;
+  }
+
+  function renderPomoDots() {
+    // Four dots show progress within the current cycle toward a long break.
+    var lit = state.completedFocus % 4;
+    if (lit === 0 && state.completedFocus > 0) lit = 4; // show a full cycle right after the 4th
+    pomoDotsEl.innerHTML = "";
+    for (var i = 0; i < 4; i++) {
+      var dot = document.createElement("i");
+      if (i < lit) dot.className = "on";
+      pomoDotsEl.appendChild(dot);
+    }
+  }
+
+  function currentTask() {
+    for (var i = 0; i < tasks.length; i++) if (!tasks[i].done) return tasks[i];
+    return null;
+  }
+
+  function renderCurrentTask() {
+    var t = currentTask();
+    if (state.mode === "focus") {
+      currentTaskText.textContent = t ? t.text : "添加一个任务开始专注";
+    } else {
+      currentTaskText.textContent = "休息一下，喝口水 ☕";
+    }
+    // highlight the current task row
+    Array.prototype.forEach.call(taskListEl.children, function (li) {
+      li.classList.toggle("current", t && li.dataset.id === String(t.id) && state.mode === "focus");
+    });
+  }
+
+  function positionInk() {
+    var active = document.querySelector(".mode.active");
+    if (!active) return;
+    modeInk.style.width = active.offsetWidth + "px";
+    modeInk.style.transform = "translateX(" + (active.offsetLeft - 5) + "px)";
+  }
+
+  // --- audio (Web Audio API, offline) ---
+  var audioCtx = null;
+  function chime() {
+    try {
+      if (!audioCtx) {
+        var Ctx = window.AudioContext || window["webkitAudioContext"];
+        audioCtx = new Ctx();
       }
-    }, {once:true});
-  }
-
-  // Duration handling
-  function updateDurationFromInputs() {
-    focusMinutes = parseInt(focusInput.value) || 25;
-    shortMinutes = parseInt(shortInput.value) || 5;
-    longMinutes = parseInt(longInput.value) || 15;
-    durations.focus = focusMinutes * 60;
-    durations.short = shortMinutes * 60;
-    durations.long = longMinutes * 60;
-  }
-
-  // UI updates
-  function renderModeUI() {
-    modeTabs.forEach(tab => {
-      tab.classList.toggle('active', tab.dataset.mode === currentMode);
-    });
-    progressCircle.className = 'timer-progress ' + currentMode;
-  }
-
-  function updateTimeDisplay() {
-    const mins = String(Math.floor(remaining / 60)).padStart(2,'0');
-    const secs = String(remaining % 60).padStart(2,'0');
-    timeDisplay.textContent = `${mins}:${secs}`;
-  }
-
-  function updateProgressCircle() {
-    const total = durations[currentMode];
-    const offset = 283 * (remaining / total); // 2*PI*45 ≈ 283
-    progressCircle.style.strokeDashoffset = 283 - offset;
-  }
-
-  function updateCurrentTask() {
-    const task = tasks.find(t => !t.done);
-    currentTaskSpan.textContent = task ? task.text : 'No tasks';
-  }
-
-  function renderTasks() {
-    taskList.innerHTML = '';
-    tasks.forEach(t => {
-      const li = document.createElement('li');
-      li.className = 'task-item';
-      li.innerHTML = `
-        <button class="toggle-done" aria-label="${t.done ? 'Mark as undone' : 'Mark as done'}">
-          ${t.done ? '✔' : '○'}
-        </button>
-        <span class="task-text ${t.done ? 'done' : ''}">${t.text}</span>
-        <button class="delete" aria-label="Delete task">✕</button>
-      `;
-      li.querySelector('.toggle-done').addEventListener('click', () => {
-        t.done = !t.done;
-        updateCurrentTask();
-        renderTasks();
+      var now = audioCtx.currentTime;
+      var notes = [880, 1108.73, 1318.51]; // A5, C#6, E6 — a bright major triad
+      notes.forEach(function (freq, i) {
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        var t = now + i * 0.14;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.22, t + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + 0.95);
       });
-      li.querySelector('.delete').addEventListener('click', () => {
-        const idx = tasks.indexOf(t);
-        if (idx > -1) tasks.splice(idx,1);
-        updateCurrentTask();
-        renderTasks();
-      });
-      taskList.appendChild(li);
+    } catch (e) { /* audio unavailable — fail silently */ }
+  }
+
+  // --- timer control ---
+  function setMode(mode) {
+    state.mode = mode;
+    appEl.setAttribute("data-mode", mode);
+    modeButtons.forEach(function (b) {
+      var on = b.dataset.mode === mode;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
     });
-  }
-
-  // Timer control
-  function startTimer() {
-    if (isRunning) return;
-    isRunning = true;
-    timerInterval = setInterval(tick, 1000);
-  }
-
-  function pauseTimer() {
-    if (!isRunning) return;
-    isRunning = false;
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
-
-  function resetTimer() {
-    pauseTimer();
-    remaining = durations[currentMode];
-    updateTimeDisplay();
-    updateProgressCircle();
+    phaseEl.textContent = MODES[mode].label;
+    positionInk();
+    stop();
+    state.total = state.durations[mode] * 60;
+    state.remaining = state.total;
+    renderTime();
+    renderCurrentTask();
   }
 
   function tick() {
-    if (remaining <= 0) {
-      pauseTimer();
-      onTimerEnd();
-      return;
+    if (state.remaining > 0) {
+      state.remaining--;
+      renderTime();
     }
-    remaining--;
-    updateTimeDisplay();
-    updateProgressCircle();
+    if (state.remaining <= 0) complete();
   }
 
-  function onTimerEnd() {
-    // Flash ring
-    progressCircle.classList.add('flash');
-    setTimeout(() => progressCircle.classList.remove('flash'), 600);
-    // Play chime
-    playChime();
-    // Handle mode transition
-    if (currentMode === 'focus') {
-      pomodorosCompleted++;
-      pomodorosCount.textContent = pomodorosCompleted;
-      // Auto suggest break
-      if (pomodorosCompleted % 4 === 0) {
-        currentMode = 'long';
+  function start() {
+    if (state.running) { stop(); return; }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    state.running = true;
+    startLabel.textContent = "暂停";
+    startBtn.classList.add("running");
+    startBtn.querySelector(".btn-ico").textContent = "❚❚";
+    state.ticker = setInterval(tick, 1000);
+  }
+
+  function stop() {
+    state.running = false;
+    startLabel.textContent = "开始";
+    startBtn.classList.remove("running");
+    startBtn.querySelector(".btn-ico").textContent = "▶";
+    if (state.ticker) { clearInterval(state.ticker); state.ticker = null; }
+  }
+
+  function reset() {
+    // pull in any edited durations
+    state.durations.focus = clampInt(focusMin.value, 1, 90, 25);
+    state.durations.short = clampInt(shortMin.value, 1, 30, 5);
+    state.durations.long = clampInt(longMin.value, 1, 60, 15);
+    focusMin.value = state.durations.focus;
+    shortMin.value = state.durations.short;
+    longMin.value = state.durations.long;
+    stop();
+    state.total = state.durations[state.mode] * 60;
+    state.remaining = state.total;
+    renderTime();
+  }
+
+  function complete() {
+    stop();
+    chime();
+    ringSvg.classList.add("flash");
+    setTimeout(function () { ringSvg.classList.remove("flash"); }, 1200);
+
+    if (state.mode === "focus") {
+      state.pomodorosToday++;
+      state.completedFocus++;
+      pomoCountEl.textContent = state.pomodorosToday;
+      renderPomoDots();
+      // auto-complete the task we were focusing on
+      var t = currentTask();
+      if (t) toggleTask(t.id, true);
+      if (state.completedFocus % 4 === 0) {
+        showToast("🎉 完成 4 个番茄，去长休息一下吧！");
+        setMode("long");
       } else {
-        currentMode = 'short';
+        showToast("✅ 专注完成，短暂休息片刻");
+        setMode("short");
       }
     } else {
-      // break ended -> back to focus
-      currentMode = 'focus';
+      showToast("🍅 休息结束，回到专注");
+      setMode("focus");
     }
-    remaining = durations[currentMode];
-    updateTimeDisplay();
-    updateProgressCircle();
-    renderModeUI();
-    updateCurrentTask();
   }
 
-  // Chime via Web Audio API
-  function playChime() {
-    if (!(window.AudioContext || window.webkitAudioContext)) return;
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(440, ctx.currentTime); // A4
-    gain.gain.setValueAtTime(0, ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.5);
+  function clampInt(v, lo, hi, dflt) {
+    var n = parseInt(v, 10);
+    if (isNaN(n)) return dflt;
+    return Math.max(lo, Math.min(hi, n));
   }
 
-  // Event listeners
-  modeTabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      if (tab.dataset.mode === currentMode) return;
-      pauseTimer();
-      currentMode = tab.dataset.mode;
-      remaining = durations[currentMode];
-      updateTimeDisplay();
-      updateProgressCircle();
-      renderModeUI();
-      updateCurrentTask();
-    });
-  });
-
-  startBtn.addEventListener('click', startTimer);
-  pauseBtn.addEventListener('click', pauseTimer);
-  resetBtn.addEventListener('click', resetTimer);
-
-  focusInput.addEventListener('change', updateDurationFromInputs);
-  shortInput.addEventListener('change', updateDurationFromInputs);
-  longInput.addEventListener('change', updateDurationFromInputs);
-
-  addTaskBtn.addEventListener('click', () => {
-    const text = taskInput.value.trim();
-    if (text) {
-      tasks.push({ id: Date.now(), text, done: false });
-      taskInput.value = '';
-      updateCurrentTask();
-      renderTasks();
+  // --- toast ---
+  var toastEl = null, toastTimer = null;
+  function showToast(msg) {
+    if (!toastEl) {
+      toastEl = document.createElement("div");
+      toastEl.className = "toast";
+      document.body.appendChild(toastEl);
     }
-  });
+    toastEl.textContent = msg;
+    void toastEl.offsetWidth;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, 3200);
+  }
 
-  taskInput.addEventListener('keypress', e => {
-    if (e.key === 'Enter') addTaskBtn.click();
-  });
+  // --- tasks ---
+  function renderTasks() {
+    var done = 0;
+    tasks.forEach(function (t) { if (t.done) done++; });
+    tasksCount.textContent = done + " / " + tasks.length;
+    tasksEmpty.classList.toggle("hidden", tasks.length > 0);
+    renderCurrentTask();
+  }
 
-  // Initialize
-  init();
+  function addTaskEl(t) {
+    var li = document.createElement("li");
+    li.className = "task-item" + (t.done ? " done" : "");
+    li.dataset.id = t.id;
+
+    var check = document.createElement("button");
+    check.className = "task-check";
+    check.setAttribute("aria-label", "标记完成 / Toggle done");
+    check.addEventListener("click", function () { toggleTask(t.id); });
+
+    var label = document.createElement("span");
+    label.className = "task-label";
+    label.textContent = t.text;
+
+    var del = document.createElement("button");
+    del.className = "task-del";
+    del.setAttribute("aria-label", "删除任务 / Delete task");
+    del.textContent = "×";
+    del.addEventListener("click", function () { removeTask(t.id); });
+
+    li.appendChild(check);
+    li.appendChild(label);
+    li.appendChild(del);
+    taskListEl.appendChild(li);
+  }
+
+  function addTask(text) {
+    text = text.trim();
+    if (!text) return;
+    var t = { id: ++taskSeq, text: text, done: false };
+    tasks.push(t);
+    addTaskEl(t);
+    renderTasks();
+  }
+
+  function toggleTask(id, forceDone) {
+    var li = taskListEl.querySelector('[data-id="' + id + '"]');
+    for (var i = 0; i < tasks.length; i++) {
+      if (tasks[i].id === id) {
+        tasks[i].done = forceDone === true ? true : !tasks[i].done;
+        if (li) li.classList.toggle("done", tasks[i].done);
+        break;
+      }
+    }
+    renderTasks();
+  }
+
+  function removeTask(id) {
+    var li = taskListEl.querySelector('[data-id="' + id + '"]');
+    if (li) {
+      li.classList.add("leaving");
+      setTimeout(function () { if (li.parentNode) li.parentNode.removeChild(li); }, 300);
+    }
+    tasks = tasks.filter(function (t) { return t.id !== id; });
+    renderTasks();
+  }
+
+  // --- wire up ---
+  modeButtons.forEach(function (b) {
+    b.addEventListener("click", function () { setMode(b.dataset.mode); });
+  });
+  startBtn.addEventListener("click", start);
+  resetBtn.addEventListener("click", reset);
+  taskForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    addTask(taskInput.value);
+    taskInput.value = "";
+    taskInput.focus();
+  });
+  window.addEventListener("resize", positionInk);
+
+  // seed with a couple of inviting example tasks
+  addTask("写完项目提案初稿");
+  addTask("回复重要邮件");
+
+  setMode("focus");
+  renderPomoDots();
+  // position ink after layout settles
+  requestAnimationFrame(positionInk);
+  setTimeout(positionInk, 60);
 })();

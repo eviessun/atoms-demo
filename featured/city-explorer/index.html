@@ -2,34 +2,61 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>城市漫游 / City Explorer</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>城市漫游 / City Explorer</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <h1>城市漫游 / City Explorer</h1>
-  <div class="city-selector" id="citySelector"></div>
-</header>
-<main class="container">
-  <section class="map-panel">
-    <svg class="city-map" id="cityMap" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet"></svg>
-  </section>
-  <section class="attractions-panel">
-    <div class="header-line" id="cityHeader"></div>
-    <ul class="attractions-list" id="attractionsList"></ul>
-  </section>
-</main>
-<div class="detail-card" id="detailCard" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
-  <div class="detail-card-content">
-    <button class="close-btn" aria-label="Close details">&times;</button>
-    <h2 id="detailTitle"></h2>
-    <div class="detail-body">
-      <span class="category-chip"></span>
-      <p class="description"></p>
-      <div class="rating">★★★★☆</div>
+<div class="app" id="app">
+  <header class="app-head">
+    <div class="title-wrap">
+      <span class="compass" aria-hidden="true">✺</span>
+      <div>
+        <h1>城市漫游</h1>
+        <p class="subtitle">City Explorer · 挑一座城，开启一场纸上漫游</p>
+      </div>
     </div>
-  </div>
+    <nav class="city-selector" id="citySelector" aria-label="选择城市 / Choose a city"></nav>
+  </header>
+
+  <main class="stage">
+    <!-- Map panel -->
+    <section class="map-panel" aria-label="城市地图 / City map">
+      <div class="map-caption" id="mapCaption">
+        <span class="mc-emoji" id="mcEmoji">🏙️</span>
+        <span class="mc-name" id="mcName">北京 · Beijing</span>
+        <span class="mc-count" id="mcCount">6 处景点</span>
+      </div>
+      <div class="map-frame">
+        <svg class="city-map" id="cityMap" viewBox="0 0 400 320" preserveAspectRatio="xMidYMid meet"
+             role="img" aria-label="手绘城市地图"></svg>
+        <div class="map-legend" id="mapLegend"></div>
+      </div>
+    </section>
+
+    <!-- Attractions list -->
+    <section class="list-panel">
+      <div class="list-head">
+        <h2 id="listCity">景点</h2>
+        <span class="list-hint">点击查看详情 →</span>
+      </div>
+      <ul class="attractions" id="attractionsList"></ul>
+    </section>
+  </main>
+
+  <!-- Detail card -->
+  <div class="detail-backdrop" id="detailBackdrop" hidden></div>
+  <aside class="detail-card" id="detailCard" role="dialog" aria-modal="true" aria-labelledby="detailTitle" hidden>
+    <button class="detail-close" id="detailClose" aria-label="关闭 / Close">×</button>
+    <div class="detail-hero" id="detailHero"><span id="detailEmoji">📍</span></div>
+    <div class="detail-body">
+      <span class="detail-chip" id="detailChip">历史</span>
+      <h3 id="detailTitle">景点名称</h3>
+      <p class="detail-en" id="detailEn">Attraction</p>
+      <div class="detail-rating" id="detailRating" aria-label="评分"></div>
+      <p class="detail-desc" id="detailDesc"></p>
+    </div>
+  </aside>
 </div>
 
 <script src="app.js"></script>
